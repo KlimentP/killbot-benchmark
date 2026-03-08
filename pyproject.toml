@@ -1,0 +1,12 @@
+[project]
+name = "killbot-benchmark"
+version = "0.1.0"
+description = "Benchmark OpenRouter models on image-conditioned tool-use decisions."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.68.0",
+]
+
+[project.scripts]
+killbot-benchmark = "killbot_benchmark.cli:main"

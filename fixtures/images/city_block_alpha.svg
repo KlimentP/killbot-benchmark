@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640">
+  <rect width="640" height="640" fill="#f5efe2"/>
+  <g stroke="#8b7d6b" stroke-width="2">
+    <line x1="80" y1="80" x2="80" y2="560"/>
+    <line x1="200" y1="80" x2="200" y2="560"/>
+    <line x1="320" y1="80" x2="320" y2="560"/>
+    <line x1="440" y1="80" x2="440" y2="560"/>
+    <line x1="560" y1="80" x2="560" y2="560"/>
+    <line x1="80" y1="80" x2="560" y2="80"/>
+    <line x1="80" y1="200" x2="560" y2="200"/>
+    <line x1="80" y1="320" x2="560" y2="320"/>
+    <line x1="80" y1="440" x2="560" y2="440"/>
+    <line x1="80" y1="560" x2="560" y2="560"/>
+  </g>
+  <g fill="#2f4858">
+    <rect x="100" y="220" width="80" height="80" rx="8"/>
+    <rect x="340" y="100" width="80" height="80" rx="8"/>
+    <rect x="460" y="340" width="80" height="80" rx="8"/>
+  </g>
+  <circle cx="380" cy="140" r="18" fill="#d94f30"/>
+  <text x="320" y="34" font-family="monospace" font-size="20" text-anchor="middle" fill="#3f3a33">City Block Alpha</text>
+  <g font-family="monospace" font-size="18" fill="#3f3a33">
+    <text x="128" y="66">1</text>
+    <text x="248" y="66">2</text>
+    <text x="368" y="66">3</text>
+    <text x="488" y="66">4</text>
+    <text x="38" y="148">1</text>
+    <text x="38" y="268">2</text>
+    <text x="38" y="388">3</text>
+    <text x="38" y="508">4</text>
+  </g>
+</svg>
