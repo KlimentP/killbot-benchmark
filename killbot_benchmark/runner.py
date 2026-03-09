@@ -1,84 +1,219 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
+import shutil
 from typing import Any
 from uuid import uuid4
 
-from killbot_benchmark.config import BenchmarkConfig, ModelConfig, PromptConfig, ScenarioConfig
+from killbot_benchmark.config import BenchmarkConfig, ModelConfig, PromptConfig, ScenarioConfig, ToolConfig
 from killbot_benchmark.openrouter import OpenRouterClient
-from killbot_benchmark.reporting import append_jsonl, load_jsonl, write_markdown_report, write_summary_csv
+from killbot_benchmark.reporting import (
+    append_jsonl,
+    load_jsonl,
+    write_html_report,
+    write_markdown_report,
+    write_summary_csv,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class BenchmarkCase:
     model: ModelConfig
     prompt: PromptConfig
+    tool: ToolConfig
     scenario: ScenarioConfig
 
 
 def build_cases(config: BenchmarkConfig) -> list[BenchmarkCase]:
     return [
-        BenchmarkCase(model=model, prompt=prompt, scenario=scenario)
+        BenchmarkCase(model=model, prompt=prompt, tool=tool, scenario=scenario)
         for model in config.models
         for prompt in config.prompts
+        for tool in config.tools
         for scenario in config.scenarios
     ]
 
 
-def run_benchmark(config: BenchmarkConfig, client: OpenRouterClient | None = None) -> dict[str, Path]:
+def run_benchmark(
+    config: BenchmarkConfig, client: OpenRouterClient | None = None, dry_run: bool = False
+) -> dict[str, Path]:
+    latest_dir = _latest_output_dir(config.run.output_dir)
+    archive_root = latest_dir.parent / "archive"
+
+    if dry_run:
+        latest_dir.mkdir(parents=True, exist_ok=True)
+        return write_dry_run_plan(config, latest_dir / "dry_run_plan.md")
+
     client = client or OpenRouterClient(config.run)
 
-    output_dir = config.run.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
+    archived_dir = _archive_previous_run(latest_dir, archive_root)
+    latest_dir.mkdir(parents=True, exist_ok=True)
 
-    results_path = output_dir / "results.jsonl"
-    summary_path = output_dir / "summary.csv"
-    report_path = output_dir / "report.md"
-    if results_path.exists():
-        results_path.unlink()
+    results_path = latest_dir / "results.jsonl"
+    summary_path = latest_dir / "summary.csv"
+    report_path = latest_dir / "report.md"
+    html_report_path = latest_dir / "report.html"
 
-    for case in build_cases(config):
-        record = _run_case(client, config, case)
+    logger.info(
+        "Starting benchmark with %s models x %s prompts x %s tools x %s scenarios -> %s runs",
+        len(config.models),
+        len(config.prompts),
+        len(config.tools),
+        len(config.scenarios),
+        len(build_cases(config)),
+    )
+    logger.info("Writing outputs to %s", latest_dir)
+    if archived_dir is not None:
+        logger.info("Archived previous latest run to %s", archived_dir)
+
+    for record in _run_cases(client, config, build_cases(config)):
         append_jsonl(results_path, record)
+        logger.info(
+            "Recorded result model=%s prompt=%s tool=%s scenario=%s tool_called=%s refused=%s error=%s",
+            record["model_id"],
+            record["prompt_id"],
+            record["tool_variant_id"],
+            record["scenario_id"],
+            record["called_tool"],
+            record["refused"],
+            record["error"] or "-",
+        )
 
     records = load_jsonl(results_path)
     write_summary_csv(records, summary_path)
     write_markdown_report(records, report_path)
+    write_html_report(records, html_report_path)
 
     return {
         "results": results_path,
         "summary": summary_path,
         "report": report_path,
+        "html_report": html_report_path,
     }
 
 
-def regenerate_reports(input_path: Path, output_dir: Path | None = None) -> dict[str, Path]:
+def write_dry_run_plan(config: BenchmarkConfig, output_path: Path) -> dict[str, Path]:
+    cases = build_cases(config)
+    latest_dir = _latest_output_dir(config.run.output_dir)
+    archive_root = latest_dir.parent / "archive"
+    lines = [
+        "# Benchmark Dry Run",
+        "",
+        "This preview describes the benchmark plan without making any API requests.",
+        "",
+        f"Config: {config.source_path}",
+        f"Latest directory: {latest_dir}",
+        f"Archive directory: {archive_root}",
+        f"Results path: {latest_dir / 'results.jsonl'}",
+        f"Summary path: {latest_dir / 'summary.csv'}",
+        f"Report path: {latest_dir / 'report.md'}",
+        f"HTML report path: {latest_dir / 'report.html'}",
+        "",
+        "## Run settings",
+        "",
+        f"- Models: {len(config.models)}",
+        f"- Prompts: {len(config.prompts)}",
+        f"- Tools: {len(config.tools)}",
+        f"- Scenarios: {len(config.scenarios)}",
+        f"- Planned runs: {len(cases)}",
+        f"- Temperature: {config.run.temperature}",
+        f"- Max tokens: {config.run.max_tokens}",
+        f"- Max retries: {config.run.max_retries}",
+        f"- Base URL: {config.run.base_url}",
+        "",
+        "## Planned cases",
+        "",
+        "| Model | Prompt | Tool | Scenario | Image |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for case in cases:
+        lines.append(
+            f"| {case.model.id} | {case.prompt.id} | {case.tool.id} | {case.scenario.id} | {case.scenario.image_path} |"
+        )
+    output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return {"dry_run_plan": output_path}
+
+
+def regenerate_reports(
+    input_path: Path, output_dir: Path | None = None, html_only: bool = False
+) -> dict[str, Path]:
     records = load_jsonl(input_path)
     target_dir = output_dir or input_path.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    html_report_path = target_dir / "report.html"
+    write_html_report(records, html_report_path)
+    outputs = {"html_report": html_report_path}
+    if html_only:
+        return outputs
+
     summary_path = target_dir / "summary.csv"
     report_path = target_dir / "report.md"
     write_summary_csv(records, summary_path)
     write_markdown_report(records, report_path)
-    return {
-        "summary": summary_path,
-        "report": report_path,
-    }
+    outputs["summary"] = summary_path
+    outputs["report"] = report_path
+    return outputs
 
 
 def _run_case(client: OpenRouterClient, config: BenchmarkConfig, case: BenchmarkCase) -> dict[str, Any]:
     timestamp = datetime.now(timezone.utc).isoformat()
     run_id = uuid4().hex
     last_error: Exception | None = None
-    for _attempt in range(config.run.max_retries + 1):
+    total_attempts = config.run.max_retries + 1
+    for attempt_index in range(total_attempts):
         try:
-            response = client.run_case(case.model, case.prompt, case.scenario)
+            logger.info(
+                "Running case %s/%s model=%s prompt=%s tool=%s scenario=%s",
+                attempt_index + 1,
+                total_attempts,
+                case.model.id,
+                case.prompt.id,
+                case.tool.id,
+                case.scenario.id,
+            )
+            response = client.run_case(case.model, case.prompt, case.tool, case.scenario)
+            logger.info(
+                "Case succeeded model=%s prompt=%s tool=%s scenario=%s",
+                case.model.id,
+                case.prompt.id,
+                case.tool.id,
+                case.scenario.id,
+            )
             return normalize_result(run_id, timestamp, case, config, response=response)
         except Exception as exc:  # pragma: no cover - covered in integration tests via normalize_result
             last_error = exc
-    return normalize_result(run_id, timestamp, case, config, error=str(last_error))
+            logger.exception(
+                "Case failed attempt %s/%s model=%s prompt=%s tool=%s scenario=%s: %s",
+                attempt_index + 1,
+                total_attempts,
+                case.model.id,
+                case.prompt.id,
+                case.tool.id,
+                case.scenario.id,
+                exc,
+            )
+    return normalize_result(run_id, timestamp, case, config, error=_format_error(last_error))
+
+
+def _run_cases(
+    client: OpenRouterClient, config: BenchmarkConfig, cases: list[BenchmarkCase]
+) -> list[dict[str, Any]]:
+    if not cases:
+        return []
+    if len(cases) == 1:
+        return [_run_case(client, config, cases[0])]
+
+    with ThreadPoolExecutor(max_workers=len(cases)) as executor:
+        futures = [executor.submit(_run_case, client, config, case) for case in cases]
+        return [future.result() for future in futures]
 
 
 def normalize_result(
@@ -100,7 +235,14 @@ def normalize_result(
         "run_id": run_id,
         "timestamp": timestamp,
         "model_id": case.model.id,
+        "model_country_of_origin": case.model.country_of_origin,
+        "model_weights": case.model.weights,
+        "model_artificial_analysis_benchmark_intelligence": (
+            case.model.artificial_analysis_benchmark_intelligence
+        ),
         "prompt_id": case.prompt.id,
+        "tool_variant_id": case.tool.id,
+        "tool_variant_function_name": case.tool.function_name,
         "scenario_id": case.scenario.id,
         "image_path": str(case.scenario.image_path),
         "called_tool": bool(tool_call),
@@ -115,6 +257,8 @@ def normalize_result(
             "temperature": config.run.temperature,
             "max_tokens": config.run.max_tokens,
             "base_url": config.run.base_url,
+            "tool_variant_id": case.tool.id,
+            "tool_variant_function_name": case.tool.function_name,
         },
         "raw_response": _response_to_dict(response) if response is not None else None,
     }
@@ -179,3 +323,34 @@ def _response_to_dict(response: Any) -> dict[str, Any]:
     if isinstance(response, dict):
         return response
     raise TypeError(f"Unsupported response type: {type(response)!r}")
+
+
+def _format_error(error: Exception | None) -> str | None:
+    if error is None:
+        return None
+    message = str(error).strip()
+    if message:
+        return f"{type(error).__name__}: {message}"
+    return type(error).__name__
+
+
+def _latest_output_dir(configured_output_dir: Path) -> Path:
+    if configured_output_dir.name == "latest":
+        return configured_output_dir
+    return configured_output_dir / "latest"
+
+
+def _archive_previous_run(latest_dir: Path, archive_root: Path) -> Path | None:
+    if not latest_dir.exists() or not any(latest_dir.iterdir()):
+        return None
+
+    archive_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    archive_dir = archive_root / timestamp
+    suffix = 1
+    while archive_dir.exists():
+        archive_dir = archive_root / f"{timestamp}-{suffix}"
+        suffix += 1
+
+    shutil.move(str(latest_dir), str(archive_dir))
+    return archive_dir

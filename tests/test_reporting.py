@@ -2,7 +2,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from killbot_benchmark.reporting import load_jsonl, write_markdown_report, write_summary_csv
+from killbot_benchmark.reporting import (
+    load_jsonl,
+    write_html_report,
+    write_markdown_report,
+    write_summary_csv,
+)
 
 
 SAMPLE_RECORDS = [
@@ -10,7 +15,12 @@ SAMPLE_RECORDS = [
         "run_id": "1",
         "timestamp": "2026-03-08T00:00:00Z",
         "model_id": "model-a",
+        "model_country_of_origin": "China",
+        "model_weights": "open",
+        "model_artificial_analysis_benchmark_intelligence": "92",
         "prompt_id": "prompt-a",
+        "tool_variant_id": "tool-a",
+        "tool_variant_function_name": "drone_strike",
         "scenario_id": "image-a",
         "image_path": "/tmp/a.png",
         "called_tool": True,
@@ -26,7 +36,12 @@ SAMPLE_RECORDS = [
         "run_id": "2",
         "timestamp": "2026-03-08T00:00:01Z",
         "model_id": "model-a",
+        "model_country_of_origin": "United States",
+        "model_weights": "closed",
+        "model_artificial_analysis_benchmark_intelligence": "",
         "prompt_id": "prompt-b",
+        "tool_variant_id": "tool-b",
+        "tool_variant_function_name": "drone_strike",
         "scenario_id": "image-a",
         "image_path": "/tmp/a.png",
         "called_tool": False,
@@ -42,19 +57,31 @@ SAMPLE_RECORDS = [
 
 
 class ReportingTests(unittest.TestCase):
-    def test_writes_summary_csv_and_markdown(self) -> None:
+    def test_writes_summary_csv_markdown_and_html(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             csv_path = root / "summary.csv"
             md_path = root / "report.md"
+            html_path = root / "report.html"
 
             write_summary_csv(SAMPLE_RECORDS, csv_path)
             write_markdown_report(SAMPLE_RECORDS, md_path)
+            write_html_report(SAMPLE_RECORDS, html_path)
 
             self.assertIn("model-a", csv_path.read_text(encoding="utf-8"))
             report_text = md_path.read_text(encoding="utf-8")
+            html_text = html_path.read_text(encoding="utf-8")
             self.assertIn("By model_id", report_text)
             self.assertIn("I refuse to do that.", report_text)
+            self.assertIn("Scenario", html_text)
+            self.assertIn("Country", html_text)
+            self.assertIn("Tool Variant", html_text)
+            self.assertIn("By tool_variant_id", report_text)
+            self.assertIn("Intelligence high to low", html_text)
+            self.assertIn('option value="China"', html_text)
+            self.assertIn('data-weights="open"', html_text)
+            self.assertIn('title="Tool variant: tool-b | Refusal: I refuse to do that."', html_text)
+            self.assertIn("Tool call", html_text)
 
     def test_load_jsonl_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
-import tomllib
 
 
 @dataclass(frozen=True)
 class ModelConfig:
     id: str
+    country_of_origin: str = ""
+    weights: str = ""
+    artificial_analysis_benchmark_intelligence: str = ""
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,17 @@ class PromptConfig:
     id: str
     text: str
     source_path: Path
+
+
+@dataclass(frozen=True)
+class ToolConfig:
+    id: str
+    spec: dict
+
+    @property
+    def function_name(self) -> str:
+        function = self.spec.get("function", {})
+        return str(function.get("name", ""))
 
 
 @dataclass(frozen=True)
@@ -30,7 +44,7 @@ class RunSettings:
     user_prompt: str
     output_dir: Path
     temperature: float = 0.0
-    max_tokens: int = 400
+    max_tokens: int = 32000
     max_retries: int = 2
     base_url: str = "https://openrouter.ai/api/v1"
     http_referer: str | None = None
@@ -42,6 +56,7 @@ class BenchmarkConfig:
     source_path: Path
     models: list[ModelConfig]
     prompts: list[PromptConfig]
+    tools: list[ToolConfig]
     scenarios: list[ScenarioConfig]
     run: RunSettings
 
@@ -57,13 +72,23 @@ def _resolve_path(base_dir: Path, relative_path: str) -> Path:
 
 def load_config(config_path: str | Path) -> BenchmarkConfig:
     source_path = Path(config_path).resolve()
-    data = tomllib.loads(source_path.read_text(encoding="utf-8"))
+    data = json.loads(source_path.read_text(encoding="utf-8"))
     base_dir = source_path.parent
 
     run_data = data["run"]
     user_prompt_path, user_prompt = _resolve_text(base_dir, run_data["user_prompt_file"])
 
-    models = [ModelConfig(id=item["id"]) for item in data["models"]]
+    models = [
+        ModelConfig(
+            id=item["id"],
+            country_of_origin=item.get("country_of_origin", ""),
+            weights=item.get("weights", ""),
+            artificial_analysis_benchmark_intelligence=item.get(
+                "artificial_analysis_benchmark_intelligence", ""
+            ),
+        )
+        for item in data["models"]
+    ]
     prompts = []
     for item in data["prompts"]:
         prompt_path, prompt_text = _resolve_text(base_dir, item["file"])
@@ -74,6 +99,14 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
                 source_path=prompt_path,
             )
         )
+
+    tools = [
+        ToolConfig(
+            id=item["id"],
+            spec=item["spec"],
+        )
+        for item in data["tools"]
+    ]
 
     scenarios = []
     for item in data["scenarios"]:
@@ -90,7 +123,7 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
         user_prompt=user_prompt,
         output_dir=_resolve_path(base_dir, run_data["output_dir"]),
         temperature=run_data.get("temperature", 0.0),
-        max_tokens=run_data.get("max_tokens", 400),
+        max_tokens=run_data.get("max_tokens", 32000),
         max_retries=run_data.get("max_retries", 2),
         base_url=run_data.get("base_url", "https://openrouter.ai/api/v1"),
         http_referer=run_data.get("http_referer"),
@@ -101,6 +134,7 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
         source_path=source_path,
         models=models,
         prompts=prompts,
+        tools=tools,
         scenarios=scenarios,
         run=run,
     )

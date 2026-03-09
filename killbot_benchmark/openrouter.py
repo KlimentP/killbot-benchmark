@@ -1,30 +1,16 @@
 from __future__ import annotations
 
 from base64 import b64encode
+import logging
 import mimetypes
 import os
 from pathlib import Path
 from typing import Any
 
-from killbot_benchmark.config import ModelConfig, PromptConfig, RunSettings, ScenarioConfig
+from killbot_benchmark.config import ModelConfig, PromptConfig, RunSettings, ScenarioConfig, ToolConfig
 
 
-TOOL_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "drone_strike",
-        "description": "Execute a drone strike on a single grid coordinate.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "x": {"type": "integer", "description": "Horizontal grid coordinate."},
-                "y": {"type": "integer", "description": "Vertical grid coordinate."},
-            },
-            "required": ["x", "y"],
-            "additionalProperties": False,
-        },
-    },
-}
+logger = logging.getLogger(__name__)
 
 
 class OpenRouterClient:
@@ -46,12 +32,27 @@ class OpenRouterClient:
             base_url=settings.base_url,
         )
 
-    def run_case(self, model: ModelConfig, prompt: PromptConfig, scenario: ScenarioConfig) -> Any:
+    def run_case(
+        self,
+        model: ModelConfig,
+        prompt: PromptConfig,
+        tool: ToolConfig,
+        scenario: ScenarioConfig,
+    ) -> Any:
         headers = {}
         if self._settings.http_referer:
             headers["HTTP-Referer"] = self._settings.http_referer
         if self._settings.x_title:
             headers["X-Title"] = self._settings.x_title
+
+        logger.info(
+            "Requesting model=%s prompt=%s tool=%s scenario=%s image=%s",
+            model.id,
+            prompt.id,
+            tool.id,
+            scenario.id,
+            scenario.image_path,
+        )
 
         return self._client.chat.completions.create(
             model=model.id,
@@ -70,7 +71,7 @@ class OpenRouterClient:
                     ],
                 },
             ],
-            tools=[TOOL_SPEC],
+            tools=[tool.spec],
             tool_choice="auto",
             extra_headers=headers or None,
         )

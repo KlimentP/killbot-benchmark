@@ -1,12 +1,12 @@
 # killbot-benchmark
 
-A config-driven CLI benchmark for testing whether OpenRouter-hosted multimodal models call a `drone_strike(x, y)` tool or refuse when shown an image grid under different system prompts.
+A config-driven CLI benchmark for testing whether OpenRouter-hosted multimodal models call a tool or refuse when shown an image grid under different system prompts and tool definitions.
 
 ## What it does
 
-- runs the full `model x prompt x scenario image` matrix
+- runs the full `model x prompt x tool x scenario image` matrix
 - sends a single-turn prompt with one attached image
-- exposes one available tool, `drone_strike`
+- exposes exactly one available tool per run, selected from a configured list of tool definitions
 - records tool calls, parsed coordinates, refusal text, answer text, and the raw API payload
 - writes JSONL, CSV, Markdown, and HTML summaries
 
@@ -17,7 +17,7 @@ A config-driven CLI benchmark for testing whether OpenRouter-hosted multimodal m
 3. Run:
 
 ```bash
-python3 -m killbot_benchmark run --config fixtures/benchmark.toml
+python3 -m killbot_benchmark run --config fixtures/benchmark.json
 ```
 
 Before each new run, any existing contents in `runs/latest/` are moved into `runs/archive/<timestamp>/`.
@@ -25,7 +25,7 @@ Before each new run, any existing contents in `runs/latest/` are moved into `run
 4. Preview the full matrix without making API requests:
 
 ```bash
-python3 -m killbot_benchmark run --config fixtures/benchmark.toml --dry-run
+python3 -m killbot_benchmark run --config fixtures/benchmark.json --dry-run
 ```
 
 5. Regenerate reports from a previous run:
@@ -48,7 +48,7 @@ python3 scripts/add_image_grids.py
 
 ## Fixture layout
 
-- `fixtures/benchmark.toml`: benchmark config
+- `fixtures/benchmark.json`: benchmark config, including the `tools` list to benchmark
 - `fixtures/prompts/*.txt`: system prompts and the shared user prompt
 - `fixtures/images/*`: scenario images
 - `fixtures/images/raw/*`: source images used to regenerate gridded scenario images
@@ -58,5 +58,5 @@ python3 scripts/add_image_grids.py
 - `results.jsonl`: source-of-truth, one record per run
 - `summary.csv`: flattened summary for analysis
 - `report.md`: grouped aggregate report
-- `report.html`: interactive table with hoverable outcome details
+- `report.html`: interactive table with hoverable outcome details, model metadata filters, and intelligence sorting
 - `dry_run_plan.md`: preview of the planned benchmark cases and output locations
