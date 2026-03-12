@@ -93,6 +93,7 @@ def write_html_report(records: list[dict], path: Path) -> None:
     )
 
     rows = []
+    popovers: dict[str, dict[str, str]] = {}
     for record in sorted(
         records,
         key=lambda item: (
@@ -104,11 +105,24 @@ def write_html_report(records: list[dict], path: Path) -> None:
         ),
     ):
         outcome = _outcome_label(record)
-        detail = _hover_detail(record)
-        hover_attr = f' title="{html.escape(detail, quote=True)}"' if detail else ""
         country = str(record.get("model_country_of_origin", "")).strip()
         weights = str(record.get("model_weights", "")).strip()
         intelligence = str(record.get("model_artificial_analysis_benchmark_intelligence", "")).strip()
+        scenario_popover_id = _register_popover(
+            popovers,
+            title=str(record.get("scenario_id", "")) or "Scenario",
+            body_html=_scenario_popover_body(record),
+        )
+        tool_popover_id = _register_popover(
+            popovers,
+            title=str(record.get("tool_variant_id", "")) or "Tool",
+            body_html=_tool_popover_body(record),
+        )
+        outcome_popover_id = _register_popover(
+            popovers,
+            title=f"{outcome}: {record.get('model_id', '') or 'Unknown model'}",
+            body_html=_agent_response_popover_body(record),
+        )
         rows.append(
             "\n".join(
                 [
@@ -119,18 +133,30 @@ def write_html_report(records: list[dict], path: Path) -> None:
                         f' data-intelligence="{html.escape(intelligence, quote=True)}"'
                         ">"
                     ),
-                    f"        <td>{html.escape(str(record.get('scenario_id', '')))}</td>",
+                    (
+                        "        <td>"
+                        f'<button type="button" class="table-link scenario-link" data-popover-id="{html.escape(scenario_popover_id, quote=True)}">'
+                        f"{html.escape(str(record.get('scenario_id', '')))}"
+                        "</button>"
+                        "</td>"
+                    ),
                     f"        <td>{html.escape(str(record.get('model_id', '')))}</td>",
-                    f"        <td>{html.escape(country or '—')}</td>",
+                    f"        <td>{_country_display(country)}</td>",
                     f"        <td>{html.escape(weights or '—')}</td>",
                     f"        <td>{html.escape(intelligence or '—')}</td>",
                     f"        <td>{html.escape(str(record.get('prompt_id', '')))}</td>",
-                    f"        <td>{html.escape(str(record.get('tool_variant_id', '')))}</td>",
                     (
                         "        <td>"
-                        f'<span class="outcome outcome-{_outcome_class(outcome)}"{hover_attr}>'
-                        f"{html.escape(outcome)}"
-                        "</span>"
+                        f'<button type="button" class="table-link tool-link" data-popover-id="{html.escape(tool_popover_id, quote=True)}">'
+                        f"{html.escape(str(record.get('tool_variant_id', '')))}"
+                        "</button>"
+                        "</td>"
+                    ),
+                    (
+                        "        <td>"
+                        f'<button type="button" class="outcome outcome-{_outcome_class(outcome)}" data-popover-id="{html.escape(outcome_popover_id, quote=True)}">'
+                        f"{_outcome_label_html(outcome)}"
+                        "</button>"
                         "</td>"
                     ),
                     "      </tr>",
@@ -243,16 +269,19 @@ def write_html_report(records: list[dict], path: Path) -> None:
       .outcome {{
         display: inline-flex;
         align-items: center;
+        gap: 0.45rem;
         padding: 0.35rem 0.7rem;
         border-radius: 999px;
         font-weight: 700;
         font-size: 0.92rem;
-        cursor: help;
+        border: 0;
+        cursor: pointer;
+        font: inherit;
       }}
 
       .outcome-tool-call {{
-        color: var(--tool);
-        background: rgba(45, 106, 79, 0.12);
+        color: var(--error);
+        background: rgba(185, 28, 28, 0.12);
       }}
 
       .outcome-refusal {{
@@ -272,6 +301,38 @@ def write_html_report(records: list[dict], path: Path) -> None:
 
       .hint {{
         margin: 0 0 1rem;
+      }}
+
+      .table-link {{
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        text-decoration: underline;
+        text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent);
+        text-underline-offset: 0.18em;
+      }}
+
+      .table-link:hover {{
+        color: var(--error);
+      }}
+
+      .flag {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.8rem;
+        font-size: 1.2rem;
+        line-height: 1;
+        cursor: help;
+      }}
+
+      .icon-skull {{
+        font-size: 0.95rem;
+        line-height: 1;
       }}
 
       .controls {{
@@ -302,12 +363,140 @@ def write_html_report(records: list[dict], path: Path) -> None:
         text-align: center;
         color: var(--muted);
       }}
+
+      dialog {{
+        width: min(840px, calc(100vw - 2rem));
+        max-height: calc(100vh - 2rem);
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: color-mix(in srgb, var(--panel) 94%, white);
+        box-shadow: 0 30px 90px rgba(42, 28, 7, 0.24);
+      }}
+
+      dialog::backdrop {{
+        background: rgba(26, 19, 10, 0.55);
+        backdrop-filter: blur(4px);
+      }}
+
+      .popover-shell {{
+        display: grid;
+        gap: 1rem;
+        padding: 1.25rem;
+      }}
+
+      .popover-header {{
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 1rem;
+      }}
+
+      .popover-header h2 {{
+        margin: 0;
+        font-size: 1.45rem;
+        line-height: 1.1;
+      }}
+
+      .popover-close {{
+        padding: 0.55rem 0.85rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }}
+
+      .popover-content {{
+        overflow: auto;
+        color: var(--ink);
+      }}
+
+      .popover-grid {{
+        display: grid;
+        grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
+        gap: 1rem;
+      }}
+
+      .popover-figure {{
+        margin: 0;
+        display: grid;
+        gap: 0.6rem;
+      }}
+
+      .popover-figure img {{
+        width: 100%;
+        max-height: 420px;
+        object-fit: contain;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background:
+          linear-gradient(135deg, rgba(216, 208, 195, 0.22), rgba(255, 255, 255, 0.5)),
+          repeating-linear-gradient(
+            -45deg,
+            rgba(216, 208, 195, 0.25),
+            rgba(216, 208, 195, 0.25) 8px,
+            transparent 8px,
+            transparent 16px
+          );
+      }}
+
+      .popover-copy {{
+        display: grid;
+        gap: 0.85rem;
+      }}
+
+      .meta {{
+        margin: 0;
+        font-size: 0.84rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }}
+
+      .code-block {{
+        margin: 0;
+        padding: 0.95rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+        font-size: 0.9rem;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }}
+
+      .section-stack {{
+        display: grid;
+        gap: 0.9rem;
+      }}
+
+      .section-stack section {{
+        display: grid;
+        gap: 0.45rem;
+      }}
+
+      .section-stack h3 {{
+        margin: 0;
+        font-size: 0.92rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }}
+
+      @media (max-width: 760px) {{
+        .popover-grid {{
+          grid-template-columns: 1fr;
+        }}
+      }}
     </style>
   </head>
   <body>
     <main>
       <h1>Benchmark Report</h1>
-      <p>Hover an outcome badge to inspect the model's text, refusal, tool call details, or errors.</p>
+      <p>Click scenarios for the prompt and image, tools for the definition, and outcomes for the captured agent response.</p>
 
       <section class="summary" aria-label="Summary">
         <article class="card"><strong>{total_runs}</strong><span>Total runs</span></article>
@@ -364,11 +553,26 @@ def write_html_report(records: list[dict], path: Path) -> None:
         </table>
       </section>
     </main>
+    <dialog id="popover-dialog" aria-labelledby="popover-title">
+      <div class="popover-shell">
+        <div class="popover-header">
+          <h2 id="popover-title">Details</h2>
+          <button type="button" class="popover-close" id="popover-close">Close</button>
+        </div>
+        <div class="popover-content" id="popover-content"></div>
+      </div>
+    </dialog>
+    <script id="popover-data" type="application/json">{html.escape(json.dumps(popovers, ensure_ascii=False), quote=False)}</script>
     <script>
       const countryFilter = document.getElementById("country-filter");
       const weightsFilter = document.getElementById("weights-filter");
       const sortSelect = document.getElementById("sort-select");
       const tableBody = document.getElementById("results-body");
+      const popoverData = JSON.parse(document.getElementById("popover-data").textContent);
+      const popoverDialog = document.getElementById("popover-dialog");
+      const popoverTitle = document.getElementById("popover-title");
+      const popoverContent = document.getElementById("popover-content");
+      const popoverClose = document.getElementById("popover-close");
       const rows = Array.from(tableBody.querySelectorAll("tr")).filter(
         (row) => !row.classList.contains("empty-state")
       );
@@ -429,9 +633,42 @@ def write_html_report(records: list[dict], path: Path) -> None:
         }}
       }}
 
+      function openPopover(id) {{
+        const item = popoverData[id];
+        if (!item) {{
+          return;
+        }}
+        popoverTitle.textContent = item.title || "Details";
+        popoverContent.innerHTML = item.body_html || "<p>No details available.</p>";
+        if (popoverDialog.open) {{
+          popoverDialog.close();
+        }}
+        popoverDialog.showModal();
+      }}
+
       countryFilter.addEventListener("change", renderRows);
       weightsFilter.addEventListener("change", renderRows);
       sortSelect.addEventListener("change", renderRows);
+      popoverClose.addEventListener("click", () => popoverDialog.close());
+      document.addEventListener("click", (event) => {{
+        const trigger = event.target.closest("[data-popover-id]");
+        if (!trigger) {{
+          return;
+        }}
+        openPopover(trigger.dataset.popoverId);
+      }});
+      popoverDialog.addEventListener("click", (event) => {{
+        const rect = popoverDialog.getBoundingClientRect();
+        const clickedOutside =
+          event.clientX < rect.left ||
+          event.clientX > rect.right ||
+          event.clientY < rect.top ||
+          event.clientY > rect.bottom;
+
+        if (clickedOutside) {{
+          popoverDialog.close();
+        }}
+      }});
       renderRows();
     </script>
   </body>
@@ -506,3 +743,159 @@ def _hover_detail(record: dict) -> str:
             parts.append(f"{label}: {compact}")
 
     return " | ".join(parts)
+
+
+def _register_popover(popovers: dict[str, dict[str, str]], title: str, body_html: str) -> str:
+    key = f"popover-{len(popovers)}"
+    popovers[key] = {"title": title, "body_html": body_html}
+    return key
+
+
+def _country_display(country: str) -> str:
+    if not country:
+        return "—"
+
+    normalized = country.strip().lower()
+    flag = {
+        "china": "&#x1F1E8;&#x1F1F3;",
+        "us": "&#x1F1FA;&#x1F1F8;",
+        "usa": "&#x1F1FA;&#x1F1F8;",
+        "united states": "&#x1F1FA;&#x1F1F8;",
+        "united states of america": "&#x1F1FA;&#x1F1F8;",
+    }.get(normalized)
+    if not flag:
+        return html.escape(country)
+    return (
+        f'<span class="flag" title="{html.escape(country, quote=True)}" '
+        f'aria-label="{html.escape(country, quote=True)}">{flag}</span>'
+    )
+
+
+def _outcome_label_html(outcome: str) -> str:
+    label = html.escape(outcome)
+    if outcome == "Tool call":
+        return f'<span class="icon-skull" aria-hidden="true">&#9760;</span><span>{label}</span>'
+    return f"<span>{label}</span>"
+
+
+def _scenario_popover_body(record: dict) -> str:
+    image_markup = _scenario_image_markup(record)
+    prompt_text = str(record.get("prompt_text", "")).strip() or "Prompt text unavailable in this result file."
+    prompt_id = str(record.get("prompt_id", "")).strip()
+    scenario_description = str(record.get("scenario_description", "")).strip()
+
+    description_markup = (
+        f"<p>{html.escape(scenario_description)}</p>" if scenario_description else "<p>No scenario description provided.</p>"
+    )
+
+    return (
+        '<div class="popover-grid">'
+        f"{image_markup}"
+        '<div class="popover-copy">'
+        f'<p class="meta">Prompt {html.escape(prompt_id or "Unknown")}</p>'
+        f"{description_markup}"
+        f'<pre class="code-block">{html.escape(prompt_text)}</pre>'
+        "</div>"
+        "</div>"
+    )
+
+
+def _scenario_image_markup(record: dict) -> str:
+    image_path = str(record.get("image_path", "")).strip()
+    scenario_label = str(record.get("scenario_label", "")).strip() or str(record.get("scenario_id", "")).strip()
+    if image_path:
+        try:
+            image_uri = Path(image_path).expanduser().resolve().as_uri()
+        except ValueError:
+            image_uri = ""
+        if image_uri:
+            return (
+                '<figure class="popover-figure">'
+                f'<img src="{html.escape(image_uri, quote=True)}" alt="{html.escape(scenario_label or "Scenario image", quote=True)}">'
+                f"<figcaption>{html.escape(image_path)}</figcaption>"
+                "</figure>"
+            )
+
+    return (
+        '<figure class="popover-figure">'
+        '<div class="code-block">No scenario image path available.</div>'
+        "</figure>"
+    )
+
+
+def _tool_popover_body(record: dict) -> str:
+    tool_definition = record.get("tool_definition")
+    if tool_definition:
+        definition_text = json.dumps(tool_definition, ensure_ascii=False, indent=2, sort_keys=True)
+    else:
+        definition_text = "Tool definition unavailable in this result file."
+
+    return (
+        '<div class="section-stack">'
+        "<section>"
+        "<h3>Function</h3>"
+        f'<pre class="code-block">{html.escape(str(record.get("tool_variant_function_name", "")).strip() or "Unknown")}</pre>'
+        "</section>"
+        "<section>"
+        "<h3>Definition</h3>"
+        f'<pre class="code-block">{html.escape(definition_text)}</pre>'
+        "</section>"
+        "</div>"
+    )
+
+
+def _agent_response_popover_body(record: dict) -> str:
+    sections = []
+
+    summary = _hover_detail(record)
+    if summary:
+        sections.append(_popover_section("Summary", summary))
+
+    for heading, key in (("Agent text", "answer_text"), ("Refusal", "refusal_text"), ("Error", "error")):
+        raw_value = record.get(key)
+        if raw_value is None:
+            continue
+        value = str(raw_value).strip()
+        if value:
+            sections.append(_popover_section(heading, value))
+
+    message = _agent_message(record)
+    if message:
+        sections.append(_popover_section("Agent response", json.dumps(message, ensure_ascii=False, indent=2, sort_keys=True)))
+
+    if not sections:
+        sections.append(_popover_section("Details", "No response details were captured for this record."))
+
+    return f'<div class="section-stack">{"".join(sections)}</div>'
+
+
+def _popover_section(title: str, body: str) -> str:
+    return (
+        "<section>"
+        f"<h3>{html.escape(title)}</h3>"
+        f'<pre class="code-block">{html.escape(body)}</pre>'
+        "</section>"
+    )
+
+
+def _agent_message(record: dict) -> dict | None:
+    agent_response = record.get("agent_response")
+    if isinstance(agent_response, dict) and agent_response:
+        return agent_response
+
+    raw_response = record.get("raw_response")
+    if not isinstance(raw_response, dict):
+        return None
+
+    choices = raw_response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return None
+
+    message = first_choice.get("message")
+    if isinstance(message, dict) and message:
+        return message
+    return None

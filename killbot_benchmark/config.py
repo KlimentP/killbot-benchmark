@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from typing import TypeVar
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,14 @@ class ScenarioConfig:
 
 
 @dataclass(frozen=True)
+class BenchmarkCatalog:
+    models: list[ModelConfig]
+    prompts: list[PromptConfig]
+    tools: list[ToolConfig]
+    scenarios: list[ScenarioConfig]
+
+
+@dataclass(frozen=True)
 class RunSettings:
     user_prompt: str
     output_dir: Path
@@ -49,6 +58,8 @@ class RunSettings:
     base_url: str = "https://openrouter.ai/api/v1"
     http_referer: str | None = None
     x_title: str | None = None
+    mode: str = "append"
+    skip_existing: bool = True
 
 
 @dataclass(frozen=True)
@@ -59,6 +70,23 @@ class BenchmarkConfig:
     tools: list[ToolConfig]
     scenarios: list[ScenarioConfig]
     run: RunSettings
+    catalog: BenchmarkCatalog | None = None
+
+    def __post_init__(self) -> None:
+        if self.catalog is None:
+            object.__setattr__(
+                self,
+                "catalog",
+                BenchmarkCatalog(
+                    models=list(self.models),
+                    prompts=list(self.prompts),
+                    tools=list(self.tools),
+                    scenarios=list(self.scenarios),
+                ),
+            )
+
+
+ConfigItem = TypeVar("ConfigItem", ModelConfig, PromptConfig, ToolConfig, ScenarioConfig)
 
 
 def _resolve_text(base_dir: Path, relative_path: str) -> tuple[Path, str]:
@@ -169,13 +197,64 @@ def _strip_trailing_commas(raw_text: str) -> str:
     return "".join(cleaned_chars)
 
 
+def _catalog_data(data: dict) -> dict:
+    if "catalog" in data:
+        return data["catalog"]
+    return {
+        "models": data.get("models", []),
+        "prompts": data.get("prompts", []),
+        "tools": data.get("tools", []),
+        "scenarios": data.get("scenarios", []),
+    }
+
+
+def _selection_data(data: dict) -> dict:
+    return data.get("selection") or {}
+
+
+def _validate_unique_ids(kind: str, items: list[ConfigItem]) -> None:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for item in items:
+        if item.id in seen and item.id not in duplicates:
+            duplicates.append(item.id)
+        seen.add(item.id)
+    if duplicates:
+        raise ValueError(f"Duplicate {kind} ids in config: {', '.join(duplicates)}")
+
+
+def _select_items(kind: str, items: list[ConfigItem], selected_ids: list[str] | None) -> list[ConfigItem]:
+    _validate_unique_ids(kind, items)
+    if selected_ids is None:
+        return list(items)
+
+    unique_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_id in selected_ids:
+        item_id = str(raw_id)
+        if item_id in seen:
+            raise ValueError(f"Duplicate {kind} selection id in config: {item_id}")
+        unique_ids.append(item_id)
+        seen.add(item_id)
+
+    indexed_items = {item.id: item for item in items}
+    missing_ids = [item_id for item_id in unique_ids if item_id not in indexed_items]
+    if missing_ids:
+        raise ValueError(f"Unknown {kind} selection ids in config: {', '.join(missing_ids)}")
+
+    return [indexed_items[item_id] for item_id in unique_ids]
+
+
 def load_config(config_path: str | Path) -> BenchmarkConfig:
     source_path = Path(config_path).resolve()
     data = _load_config_data(source_path)
     base_dir = source_path.parent
 
     run_data = data["run"]
-    user_prompt_path, user_prompt = _resolve_text(base_dir, run_data["user_prompt_file"])
+    _, user_prompt = _resolve_text(base_dir, run_data["user_prompt_file"])
+
+    catalog_data = _catalog_data(data)
+    selection_data = _selection_data(data)
 
     models = [
         ModelConfig(
@@ -186,10 +265,10 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
                 "artificial_analysis_benchmark_intelligence", ""
             ),
         )
-        for item in data["models"]
+        for item in catalog_data["models"]
     ]
     prompts = []
-    for item in data["prompts"]:
+    for item in catalog_data["prompts"]:
         prompt_path, prompt_text = _resolve_text(base_dir, item["file"])
         prompts.append(
             PromptConfig(
@@ -204,11 +283,11 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
             id=item["id"],
             spec=item["spec"],
         )
-        for item in data["tools"]
+        for item in catalog_data["tools"]
     ]
 
     scenarios = []
-    for item in data["scenarios"]:
+    for item in catalog_data["scenarios"]:
         scenarios.append(
             ScenarioConfig(
                 id=item["id"],
@@ -217,6 +296,15 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
                 description=item.get("description"),
             )
         )
+
+    selected_models = _select_items("model", models, selection_data.get("models"))
+    selected_prompts = _select_items("prompt", prompts, selection_data.get("prompts"))
+    selected_tools = _select_items("tool", tools, selection_data.get("tools"))
+    selected_scenarios = _select_items("scenario", scenarios, selection_data.get("scenarios"))
+
+    mode = str(run_data.get("mode", "append")).strip().lower() or "append"
+    if mode not in {"append", "overwrite"}:
+        raise ValueError("run.mode must be either 'append' or 'overwrite'")
 
     run = RunSettings(
         user_prompt=user_prompt,
@@ -227,13 +315,21 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
         base_url=run_data.get("base_url", "https://openrouter.ai/api/v1"),
         http_referer=run_data.get("http_referer"),
         x_title=run_data.get("x_title"),
+        mode=mode,
+        skip_existing=bool(run_data.get("skip_existing", True)),
     )
 
     return BenchmarkConfig(
         source_path=source_path,
-        models=models,
-        prompts=prompts,
-        tools=tools,
-        scenarios=scenarios,
+        models=selected_models,
+        prompts=selected_prompts,
+        tools=selected_tools,
+        scenarios=selected_scenarios,
         run=run,
+        catalog=BenchmarkCatalog(
+            models=models,
+            prompts=prompts,
+            tools=tools,
+            scenarios=scenarios,
+        ),
     )

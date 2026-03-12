@@ -10,7 +10,14 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
-from killbot_benchmark.config import BenchmarkConfig, ModelConfig, PromptConfig, ScenarioConfig, ToolConfig
+from killbot_benchmark.config import (
+    BenchmarkConfig,
+    ModelConfig,
+    PromptConfig,
+    ScenarioConfig,
+    ToolConfig,
+    load_config,
+)
 from killbot_benchmark.openrouter import OpenRouterClient
 from killbot_benchmark.reporting import (
     append_jsonl,
@@ -54,13 +61,18 @@ def run_benchmark(
 
     client = client or OpenRouterClient(config.run)
 
-    archived_dir = _archive_previous_run(latest_dir, archive_root)
+    archived_dir = None
+    if config.run.mode == "overwrite":
+        archived_dir = _archive_previous_run(latest_dir, archive_root)
     latest_dir.mkdir(parents=True, exist_ok=True)
 
     results_path = latest_dir / "results.jsonl"
     summary_path = latest_dir / "summary.csv"
     report_path = latest_dir / "report.md"
     html_report_path = latest_dir / "report.html"
+    existing_records = load_jsonl(results_path) if results_path.exists() else []
+    all_cases = build_cases(config)
+    planned_cases, skipped_existing = _filter_existing_cases(all_cases, existing_records, config)
 
     logger.info(
         "Starting benchmark with %s models x %s prompts x %s tools x %s scenarios -> %s runs",
@@ -68,13 +80,15 @@ def run_benchmark(
         len(config.prompts),
         len(config.tools),
         len(config.scenarios),
-        len(build_cases(config)),
+        len(planned_cases),
     )
-    logger.info("Writing outputs to %s", latest_dir)
+    logger.info("Writing outputs to %s using %s mode", latest_dir, config.run.mode)
     if archived_dir is not None:
         logger.info("Archived previous latest run to %s", archived_dir)
+    if skipped_existing:
+        logger.info("Skipping %s cases already present in %s", skipped_existing, results_path)
 
-    for record in _run_cases(client, config, build_cases(config)):
+    for record in _run_cases(client, config, planned_cases):
         append_jsonl(results_path, record)
         logger.info(
             "Recorded result model=%s prompt=%s tool=%s scenario=%s tool_called=%s refused=%s error=%s",
@@ -101,9 +115,12 @@ def run_benchmark(
 
 
 def write_dry_run_plan(config: BenchmarkConfig, output_path: Path) -> dict[str, Path]:
-    cases = build_cases(config)
     latest_dir = _latest_output_dir(config.run.output_dir)
     archive_root = latest_dir.parent / "archive"
+    results_path = latest_dir / "results.jsonl"
+    existing_records = load_jsonl(results_path) if results_path.exists() else []
+    all_cases = build_cases(config)
+    cases, skipped_existing = _filter_existing_cases(all_cases, existing_records, config)
     lines = [
         "# Benchmark Dry Run",
         "",
@@ -119,15 +136,19 @@ def write_dry_run_plan(config: BenchmarkConfig, output_path: Path) -> dict[str, 
         "",
         "## Run settings",
         "",
-        f"- Models: {len(config.models)}",
-        f"- Prompts: {len(config.prompts)}",
-        f"- Tools: {len(config.tools)}",
-        f"- Scenarios: {len(config.scenarios)}",
+        f"- Mode: {config.run.mode}",
+        f"- Models: {len(config.models)} selected of {len(config.catalog.models)} total",
+        f"- Prompts: {len(config.prompts)} selected of {len(config.catalog.prompts)} total",
+        f"- Tools: {len(config.tools)} selected of {len(config.catalog.tools)} total",
+        f"- Scenarios: {len(config.scenarios)} selected of {len(config.catalog.scenarios)} total",
         f"- Planned runs: {len(cases)}",
         f"- Temperature: {config.run.temperature}",
         f"- Max tokens: {config.run.max_tokens}",
         f"- Max retries: {config.run.max_retries}",
         f"- Base URL: {config.run.base_url}",
+        f"- Skip existing: {config.run.skip_existing}",
+        f"- Existing results found: {len(existing_records)}",
+        f"- Cases skipped as already present: {skipped_existing}",
         "",
         "## Planned cases",
         "",
@@ -146,6 +167,7 @@ def regenerate_reports(
     input_path: Path, output_dir: Path | None = None, html_only: bool = False
 ) -> dict[str, Path]:
     records = load_jsonl(input_path)
+    records = _enrich_records_from_config(records, input_path)
     target_dir = output_dir or input_path.parent
     target_dir.mkdir(parents=True, exist_ok=True)
     html_report_path = target_dir / "report.html"
@@ -241,9 +263,14 @@ def normalize_result(
             case.model.artificial_analysis_benchmark_intelligence
         ),
         "prompt_id": case.prompt.id,
+        "prompt_text": case.prompt.text,
+        "prompt_source_path": str(case.prompt.source_path),
         "tool_variant_id": case.tool.id,
         "tool_variant_function_name": case.tool.function_name,
+        "tool_definition": case.tool.spec,
         "scenario_id": case.scenario.id,
+        "scenario_label": case.scenario.label,
+        "scenario_description": case.scenario.description,
         "image_path": str(case.scenario.image_path),
         "called_tool": bool(tool_call),
         "tool_name": tool_call.get("name"),
@@ -253,6 +280,7 @@ def normalize_result(
         "refusal_text": refusal_text or None,
         "answer_text": answer_text or None,
         "error": error,
+        "agent_response": message or None,
         "request": {
             "temperature": config.run.temperature,
             "max_tokens": config.run.max_tokens,
@@ -354,3 +382,97 @@ def _archive_previous_run(latest_dir: Path, archive_root: Path) -> Path | None:
 
     shutil.move(str(latest_dir), str(archive_dir))
     return archive_dir
+
+
+def _enrich_records_from_config(records: list[dict[str, Any]], input_path: Path) -> list[dict[str, Any]]:
+    if not records:
+        return records
+
+    config_path = _discover_config_path(input_path)
+    if config_path is None:
+        return records
+
+    try:
+        config = load_config(config_path)
+    except Exception:
+        logger.exception("Failed to load config for report enrichment from %s", config_path)
+        return records
+
+    prompts = {prompt.id: prompt for prompt in config.catalog.prompts}
+    tools = {tool.id: tool for tool in config.catalog.tools}
+    scenarios = {scenario.id: scenario for scenario in config.catalog.scenarios}
+
+    enriched_records: list[dict[str, Any]] = []
+    for record in records:
+        enriched = dict(record)
+
+        prompt = prompts.get(str(record.get("prompt_id", "")))
+        if prompt is not None:
+            if not enriched.get("prompt_text"):
+                enriched["prompt_text"] = prompt.text
+            if not enriched.get("prompt_source_path"):
+                enriched["prompt_source_path"] = str(prompt.source_path)
+
+        tool = tools.get(str(record.get("tool_variant_id", "")))
+        if tool is not None:
+            if not enriched.get("tool_definition"):
+                enriched["tool_definition"] = tool.spec
+
+        scenario = scenarios.get(str(record.get("scenario_id", "")))
+        if scenario is not None:
+            if not enriched.get("scenario_label"):
+                enriched["scenario_label"] = scenario.label
+            if not enriched.get("scenario_description"):
+                enriched["scenario_description"] = scenario.description
+            if not enriched.get("image_path"):
+                enriched["image_path"] = str(scenario.image_path)
+
+        enriched_records.append(enriched)
+
+    return enriched_records
+
+
+def _discover_config_path(input_path: Path) -> Path | None:
+    candidate_names = (
+        "benchmark.jsonc",
+        "benchmark.json",
+        "fixtures/benchmark.jsonc",
+        "fixtures/benchmark.json",
+    )
+
+    search_roots = [input_path.parent, *input_path.parents]
+    seen: set[Path] = set()
+    for root in search_roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        for name in candidate_names:
+            candidate = root / name
+            if candidate.exists():
+                return candidate
+
+    return None
+
+
+def _filter_existing_cases(
+    cases: list[BenchmarkCase], existing_records: list[dict[str, Any]], config: BenchmarkConfig
+) -> tuple[list[BenchmarkCase], int]:
+    if config.run.mode != "append" or not config.run.skip_existing or not existing_records:
+        return list(cases), 0
+
+    existing_keys = {_case_key_from_record(record) for record in existing_records}
+    filtered_cases = [case for case in cases if _case_key(case) not in existing_keys]
+    return filtered_cases, len(cases) - len(filtered_cases)
+
+
+def _case_key(case: BenchmarkCase) -> tuple[str, str, str, str]:
+    return (case.model.id, case.prompt.id, case.tool.id, case.scenario.id)
+
+
+def _case_key_from_record(record: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(record.get("model_id", "")),
+        str(record.get("prompt_id", "")),
+        str(record.get("tool_variant_id", "")),
+        str(record.get("scenario_id", "")),
+    )

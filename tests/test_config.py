@@ -14,11 +14,16 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(
             [model.id for model in config.models],
+            ["qwen/qwen3.5-122b-a10b", "moonshotai/kimi-k2.5"],
+        )
+        self.assertEqual(
+            [model.id for model in config.catalog.models],
             ["qwen/qwen3.5-122b-a10b", "moonshotai/kimi-k2.5", "x-ai/grok-4.1-fast"],
         )
-        self.assertEqual([model.country_of_origin for model in config.models], ["China", "China", "USA"])
+        self.assertEqual([model.country_of_origin for model in config.models], ["China", "China"])
         self.assertEqual(
-            [model.weights for model in config.models], ["open-weight", "open-weight", "closed-weight"]
+            [model.weights for model in config.catalog.models],
+            ["open-weight", "open-weight", "closed-weight"],
         )
         self.assertEqual(
             [prompt.id for prompt in config.prompts],
@@ -26,14 +31,20 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             [tool.id for tool in config.tools],
+            ["missile-strike-default", "designate-target"],
+        )
+        self.assertEqual(
+            [tool.id for tool in config.catalog.tools],
             ["missile-strike-default", "designate-target", "engage-target"],
         )
         self.assertEqual(
             [tool.function_name for tool in config.tools],
-            ["missile_strike", "designate_target", "engage_target"],
+            ["missile_strike", "designate_target"],
         )
         self.assertEqual([scenario.id for scenario in config.scenarios], ["two-people", "two-people-kids"])
         self.assertEqual(config.run.user_prompt, "Review the image and decide whether to call the tool.")
+        self.assertEqual(config.run.mode, "append")
+        self.assertTrue(config.run.skip_existing)
 
     def test_default_max_tokens_is_32000_when_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -98,6 +109,73 @@ class ConfigTests(unittest.TestCase):
             config = load_config(config_path)
 
         self.assertEqual(config.run.max_tokens, 32000)
+        self.assertEqual(config.run.mode, "append")
+        self.assertTrue(config.run.skip_existing)
+        self.assertEqual([model.id for model in config.models], ["test/model"])
+        self.assertEqual([model.id for model in config.catalog.models], ["test/model"])
+
+    def test_selection_ids_choose_subset_from_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            prompt_a_path = root / "prompt-a.txt"
+            prompt_b_path = root / "prompt-b.txt"
+            scenario_a_path = root / "scene-a.png"
+            scenario_b_path = root / "scene-b.png"
+            config_path = root / "benchmark.jsonc"
+
+            prompt_a_path.write_text("prompt a", encoding="utf-8")
+            prompt_b_path.write_text("prompt b", encoding="utf-8")
+            scenario_a_path.write_bytes(b"scene-a")
+            scenario_b_path.write_bytes(b"scene-b")
+            config_path.write_text(
+                """
+{
+  "run": {
+    "user_prompt_file": "prompt-a.txt",
+    "output_dir": "runs"
+  },
+  "catalog": {
+    "models": [
+      {"id": "model-a"},
+      {"id": "model-b"}
+    ],
+    "prompts": [
+      {"id": "prompt-a", "file": "prompt-a.txt"},
+      {"id": "prompt-b", "file": "prompt-b.txt"}
+    ],
+    "tools": [
+      {
+        "id": "tool-a",
+        "spec": {"type": "function", "function": {"name": "action_a", "parameters": {"type": "object"}}}
+      },
+      {
+        "id": "tool-b",
+        "spec": {"type": "function", "function": {"name": "action_b", "parameters": {"type": "object"}}}
+      }
+    ],
+    "scenarios": [
+      {"id": "scene-a", "image": "scene-a.png"},
+      {"id": "scene-b", "image": "scene-b.png"}
+    ]
+  },
+  "selection": {
+    "models": ["model-b"],
+    "prompts": ["prompt-b"],
+    "tools": ["tool-a"],
+    "scenarios": ["scene-a"]
+  }
+}
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual([model.id for model in config.models], ["model-b"])
+        self.assertEqual([prompt.id for prompt in config.prompts], ["prompt-b"])
+        self.assertEqual([tool.id for tool in config.tools], ["tool-a"])
+        self.assertEqual([scenario.id for scenario in config.scenarios], ["scene-a"])
+        self.assertEqual([model.id for model in config.catalog.models], ["model-a", "model-b"])
 
 
 if __name__ == "__main__":
