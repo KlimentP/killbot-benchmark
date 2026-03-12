@@ -17,6 +17,7 @@ class OpenRouterClient:
     def __init__(self, settings: RunSettings):
         try:
             from openai import OpenAI
+            from httpx import Timeout
         except ModuleNotFoundError as exc:  # pragma: no cover - depends on local environment
             raise RuntimeError(
                 "The `openai` package is required to run benchmark requests. Install project dependencies first."
@@ -30,6 +31,8 @@ class OpenRouterClient:
         self._client = OpenAI(
             api_key=api_key,
             base_url=settings.base_url,
+            # Keep slow or stalled response bodies from holding the full batch open for minutes.
+            timeout=Timeout(connect=5.0, read=90.0, write=30.0, pool=30.0),
         )
 
     def run_case(
