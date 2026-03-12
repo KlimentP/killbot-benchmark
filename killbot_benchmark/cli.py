@@ -20,7 +20,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Run the full benchmark matrix.")
-    run_parser.add_argument("--config", required=True, help="Path to the benchmark JSON config.")
+    run_parser.add_argument(
+        "--config", required=True, help="Path to the benchmark JSON or JSONC config."
+    )
     run_parser.add_argument(
         "--dry-run",
         action="store_true",

@@ -70,9 +70,108 @@ def _resolve_path(base_dir: Path, relative_path: str) -> Path:
     return (base_dir / relative_path).resolve()
 
 
+def _load_config_data(source_path: Path) -> dict:
+    raw_text = source_path.read_text(encoding="utf-8")
+    if source_path.suffix.lower() == ".jsonc":
+        return json.loads(_strip_jsonc(raw_text))
+    return json.loads(raw_text)
+
+
+def _strip_jsonc(raw_text: str) -> str:
+    cleaned_chars: list[str] = []
+    in_string = False
+    string_delimiter = ""
+    escape_next = False
+    i = 0
+    length = len(raw_text)
+
+    while i < length:
+        char = raw_text[i]
+        next_char = raw_text[i + 1] if i + 1 < length else ""
+
+        if in_string:
+            cleaned_chars.append(char)
+            if escape_next:
+                escape_next = False
+            elif char == "\\":
+                escape_next = True
+            elif char == string_delimiter:
+                in_string = False
+            i += 1
+            continue
+
+        if char in {'"', "'"}:
+            in_string = True
+            string_delimiter = char
+            cleaned_chars.append(char)
+            i += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            i += 2
+            while i < length and raw_text[i] not in "\r\n":
+                i += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            i += 2
+            while i + 1 < length and not (raw_text[i] == "*" and raw_text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        cleaned_chars.append(char)
+        i += 1
+
+    return _strip_trailing_commas("".join(cleaned_chars))
+
+
+def _strip_trailing_commas(raw_text: str) -> str:
+    cleaned_chars: list[str] = []
+    in_string = False
+    string_delimiter = ""
+    escape_next = False
+    i = 0
+    length = len(raw_text)
+
+    while i < length:
+        char = raw_text[i]
+
+        if in_string:
+            cleaned_chars.append(char)
+            if escape_next:
+                escape_next = False
+            elif char == "\\":
+                escape_next = True
+            elif char == string_delimiter:
+                in_string = False
+            i += 1
+            continue
+
+        if char in {'"', "'"}:
+            in_string = True
+            string_delimiter = char
+            cleaned_chars.append(char)
+            i += 1
+            continue
+
+        if char == ",":
+            j = i + 1
+            while j < length and raw_text[j] in " \t\r\n":
+                j += 1
+            if j < length and raw_text[j] in "]}":
+                i += 1
+                continue
+
+        cleaned_chars.append(char)
+        i += 1
+
+    return "".join(cleaned_chars)
+
+
 def load_config(config_path: str | Path) -> BenchmarkConfig:
     source_path = Path(config_path).resolve()
-    data = json.loads(source_path.read_text(encoding="utf-8"))
+    data = _load_config_data(source_path)
     base_dir = source_path.parent
 
     run_data = data["run"]

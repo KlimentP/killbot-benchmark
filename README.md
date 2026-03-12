@@ -17,7 +17,7 @@ A config-driven CLI benchmark for testing whether OpenRouter-hosted multimodal m
 3. Run:
 
 ```bash
-python3 -m killbot_benchmark run --config fixtures/benchmark.json
+python3 -m killbot_benchmark run --config fixtures/benchmark.jsonc
 ```
 
 Before each new run, any existing contents in `runs/latest/` are moved into `runs/archive/<timestamp>/`.
@@ -25,7 +25,7 @@ Before each new run, any existing contents in `runs/latest/` are moved into `run
 4. Preview the full matrix without making API requests:
 
 ```bash
-python3 -m killbot_benchmark run --config fixtures/benchmark.json --dry-run
+python3 -m killbot_benchmark run --config fixtures/benchmark.jsonc --dry-run
 ```
 
 5. Regenerate reports from a previous run:
@@ -48,7 +48,7 @@ python3 scripts/add_image_grids.py
 
 ## Fixture layout
 
-- `fixtures/benchmark.json`: benchmark config, including the `tools` list to benchmark
+- `fixtures/benchmark.jsonc`: benchmark config, including the `tools` list to benchmark. JSONC lets you comment out entries while editing.
 - `fixtures/prompts/*.txt`: system prompts and the shared user prompt
 - `fixtures/images/*`: scenario images
 - `fixtures/images/raw/*`: source images used to regenerate gridded scenario images
