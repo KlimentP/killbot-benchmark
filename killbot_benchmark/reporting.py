@@ -73,10 +73,10 @@ def write_html_report(records: list[dict], path: Path) -> None:
 
     total_runs = len(records)
     tool_calls = sum(1 for record in records if record.get("called_tool"))
-    refusals = sum(1 for record in records if record.get("refused"))
     errors = sum(1 for record in records if record.get("error"))
     other = sum(1 for record in records if _outcome_label(record) == "No action")
 
+    model_options = sorted({str(record.get("model_id", "")).strip() for record in records if str(record.get("model_id", "")).strip()})
     country_options = sorted(
         {
             str(record.get("model_country_of_origin", "")).strip()
@@ -91,9 +91,15 @@ def write_html_report(records: list[dict], path: Path) -> None:
             if str(record.get("model_weights", "")).strip()
         }
     )
+    scenario_options = sorted({str(record.get("scenario_id", "")).strip() for record in records if str(record.get("scenario_id", "")).strip()})
+    prompt_options = sorted({str(record.get("prompt_id", "")).strip() for record in records if str(record.get("prompt_id", "")).strip()})
+    tool_variant_options = sorted(
+        {str(record.get("tool_variant_id", "")).strip() for record in records if str(record.get("tool_variant_id", "")).strip()}
+    )
 
     rows = []
     popovers: dict[str, dict[str, str]] = {}
+    model_popover_ids: dict[str, str] = {}
     for record in sorted(
         records,
         key=lambda item: (
@@ -108,54 +114,50 @@ def write_html_report(records: list[dict], path: Path) -> None:
         country = str(record.get("model_country_of_origin", "")).strip()
         weights = str(record.get("model_weights", "")).strip()
         intelligence = str(record.get("model_artificial_analysis_benchmark_intelligence", "")).strip()
-        scenario_popover_id = _register_popover(
+        model_id = str(record.get("model_id", "")).strip()
+        model_popover_id = model_popover_ids.get(model_id)
+        if model_id and model_popover_id is None:
+            model_popover_id = _register_popover(
+                popovers,
+                title=model_id,
+                body_html=_model_info_popover_body(record),
+            )
+            model_popover_ids[model_id] = model_popover_id
+        details_popover_id = _register_popover(
             popovers,
-            title=str(record.get("scenario_id", "")) or "Scenario",
-            body_html=_scenario_popover_body(record),
-        )
-        tool_popover_id = _register_popover(
-            popovers,
-            title=str(record.get("tool_variant_id", "")) or "Tool",
-            body_html=_tool_popover_body(record),
-        )
-        outcome_popover_id = _register_popover(
-            popovers,
-            title=f"{outcome}: {record.get('model_id', '') or 'Unknown model'}",
-            body_html=_agent_response_popover_body(record),
+            title=str(record.get("scenario_label", "")).strip() or str(record.get("scenario_id", "")) or "Details",
+            body_html=_details_popover_body(record),
         )
         rows.append(
             "\n".join(
                 [
                     (
                         '      <tr'
+                        f' data-model="{html.escape(str(record.get("model_id", "")).strip(), quote=True)}"'
                         f' data-country="{html.escape(country, quote=True)}"'
                         f' data-weights="{html.escape(weights, quote=True)}"'
+                        f' data-scenario="{html.escape(str(record.get("scenario_id", "")).strip(), quote=True)}"'
+                        f' data-prompt="{html.escape(str(record.get("prompt_id", "")).strip(), quote=True)}"'
+                        f' data-tool-variant="{html.escape(str(record.get("tool_variant_id", "")).strip(), quote=True)}"'
                         f' data-intelligence="{html.escape(intelligence, quote=True)}"'
                         ">"
                     ),
-                    (
-                        "        <td>"
-                        f'<button type="button" class="table-link scenario-link" data-popover-id="{html.escape(scenario_popover_id, quote=True)}">'
-                        f"{html.escape(str(record.get('scenario_id', '')))}"
-                        "</button>"
-                        "</td>"
-                    ),
-                    f"        <td>{html.escape(str(record.get('model_id', '')))}</td>",
-                    f"        <td>{_country_display(country)}</td>",
-                    f"        <td>{html.escape(weights or '—')}</td>",
-                    f"        <td>{html.escape(intelligence or '—')}</td>",
+                    f"        <td>{_model_cell_markup(model_id, model_popover_id or '')}</td>",
+                    f"        <td>{html.escape(str(record.get('scenario_id', '')))}</td>",
                     f"        <td>{html.escape(str(record.get('prompt_id', '')))}</td>",
                     (
                         "        <td>"
-                        f'<button type="button" class="table-link tool-link" data-popover-id="{html.escape(tool_popover_id, quote=True)}">'
                         f"{html.escape(str(record.get('tool_variant_id', '')))}"
-                        "</button>"
                         "</td>"
                     ),
                     (
-                        "        <td>"
-                        f'<button type="button" class="outcome outcome-{_outcome_class(outcome)}" data-popover-id="{html.escape(outcome_popover_id, quote=True)}">'
-                        f"{_outcome_label_html(outcome)}"
+                        '        <td class="outcome-cell">'
+                        f'<button type="button" class="outcome-trigger" data-popover-id="{html.escape(details_popover_id, quote=True)}" '
+                        'title="Show details" '
+                        f'aria-label="Show details for {html.escape(str(record.get("scenario_id", "")), quote=True)}">'
+                        f'<span class="outcome outcome-{_outcome_class(outcome)}">'
+                        f"{_outcome_label_html(outcome, record)}"
+                        "</span>"
                         "</button>"
                         "</td>"
                     ),
@@ -169,386 +171,579 @@ def write_html_report(records: list[dict], path: Path) -> None:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Benchmark Report</title>
+    <title>Killbot Benchmark Report</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
+
       :root {{
-        color-scheme: light;
-        --bg: #f5f1e8;
-        --panel: #fffdf8;
-        --ink: #1e1c18;
-        --muted: #6b655c;
-        --line: #d8d0c3;
-        --tool: #2d6a4f;
-        --refusal: #9a3412;
-        --error: #b91c1c;
-        --other: #57534e;
+        --bg:        #d8d8d4;
+        --page:      #ffffff;
+        --ink:       #080808;
+        --ink-2:     #2a2a2a;
+        --ink-3:     #666666;
+        --ink-4:     #999999;
+        --rule:      #c0c0bc;
+        --rule-hvy:  #080808;
+        --red:       #b80009;
+        --red-dim:   rgba(184,0,9,0.09);
+        --amber:     #6b3f00;
+        --amber-dim: rgba(107,63,0,0.09);
+        --neutral:   #3d3d3d;
+        --neutral-dim: rgba(30,30,30,0.07);
+        --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+        --sans: 'IBM Plex Sans', system-ui, sans-serif;
       }}
 
-      * {{
-        box-sizing: border-box;
-      }}
+      *, *::before, *::after {{ box-sizing: border-box; margin: 0; }}
 
       body {{
-        margin: 0;
-        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+        font-family: var(--sans);
+        font-size: 14px;
+        line-height: 1.6;
         color: var(--ink);
-        background:
-          radial-gradient(circle at top left, rgba(174, 192, 153, 0.3), transparent 28rem),
-          linear-gradient(180deg, #f8f5ee 0%, var(--bg) 100%);
+        background: var(--bg);
       }}
 
       main {{
-        max-width: 1100px;
+        max-width: 1200px;
         margin: 0 auto;
-        padding: 3rem 1.25rem 4rem;
+        padding: 2rem 2rem 4rem;
+        background: var(--page);
+        min-height: 100vh;
       }}
 
-      h1 {{
-        margin: 0 0 0.5rem;
-        font-size: clamp(2rem, 4vw, 3.25rem);
-        line-height: 1;
+      /* ── Header ───────────────────────────────── */
+      .report-header {{
+        border-top: 3px solid var(--ink);
+        padding: 1.5rem 0 1.5rem;
+        margin-bottom: 0;
       }}
 
-      p {{
-        margin: 0;
-        color: var(--muted);
+      .report-header h1 {{
+        font-family: var(--sans);
+        font-size: 1.35rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+        line-height: 1.2;
       }}
 
+      .report-header .subtitle {{
+        margin-top: 0.3rem;
+        font-size: 0.78rem;
+        color: var(--ink-3);
+        font-family: var(--mono);
+        letter-spacing: 0.04em;
+      }}
+
+      /* ── Summary strip ──────────────────────── */
       .summary {{
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 0.9rem;
-        margin: 2rem 0;
+        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        border-top: 1px solid var(--rule);
+        border-bottom: 1px solid var(--rule);
+        margin: 1.75rem 0;
       }}
 
-      .card, .table-wrap {{
-        background: color-mix(in srgb, var(--panel) 90%, white);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        box-shadow: 0 14px 40px rgba(55, 42, 18, 0.08);
+      .stat {{
+        padding: 1.1rem 1.25rem;
+        border-right: 1px solid var(--rule);
       }}
 
-      .card {{
-        padding: 1rem 1.1rem;
-      }}
+      .stat:last-child {{ border-right: none; }}
 
-      .card strong {{
+      .stat strong {{
         display: block;
-        font-size: 1.8rem;
+        font-family: var(--mono);
+        font-size: 2.2rem;
+        font-weight: 600;
         line-height: 1;
-        margin-bottom: 0.35rem;
+        color: var(--ink);
       }}
 
-      .table-wrap {{
-        overflow: auto;
-      }}
-
-      table {{
-        width: 100%;
-        border-collapse: collapse;
-      }}
-
-      th, td {{
-        padding: 0.9rem 1rem;
-        border-bottom: 1px solid var(--line);
-        text-align: left;
-        vertical-align: top;
-      }}
-
-      th {{
-        font-size: 0.82rem;
-        letter-spacing: 0.08em;
+      .stat span {{
+        display: block;
+        margin-top: 0.4rem;
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
-        color: var(--muted);
+        color: var(--ink-3);
       }}
 
-      tr:last-child td {{
-        border-bottom: 0;
+      /* ── Filters ────────────────────────────── */
+      .controls {{
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 0.6rem;
+        margin-bottom: 1rem;
       }}
 
-      .outcome {{
-        display: inline-flex;
-        align-items: center;
-        gap: 0.45rem;
-        padding: 0.35rem 0.7rem;
-        border-radius: 999px;
-        font-weight: 700;
-        font-size: 0.92rem;
-        border: 0;
+      .filter-group {{
+        display: grid;
+        gap: 0.28rem;
+      }}
+
+      .filter-group label {{
+        font-size: 0.67rem;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }}
+
+      select {{
+        width: 100%;
+        padding: 0.42rem 1.6rem 0.42rem 0.55rem;
+        border: 1px solid var(--rule);
+        border-radius: 0;
+        background: var(--page) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E") no-repeat right 0.55rem center;
+        color: var(--ink);
+        font: 0.8rem/1.4 var(--sans);
+        appearance: none;
         cursor: pointer;
-        font: inherit;
       }}
 
-      .outcome-tool-call {{
-        color: var(--error);
-        background: rgba(185, 28, 28, 0.12);
-      }}
-
-      .outcome-refusal {{
-        color: var(--refusal);
-        background: rgba(154, 52, 18, 0.12);
-      }}
-
-      .outcome-error {{
-        color: var(--error);
-        background: rgba(185, 28, 28, 0.1);
-      }}
-
-      .outcome-no-action {{
-        color: var(--other);
-        background: rgba(87, 83, 78, 0.12);
+      select:focus {{
+        outline: 2px solid var(--ink);
+        outline-offset: -1px;
       }}
 
       .hint {{
-        margin: 0 0 1rem;
+        font-size: 0.76rem;
+        color: var(--ink-3);
+        margin-bottom: 0.85rem;
       }}
 
-      .table-link {{
-        padding: 0;
-        border: 0;
-        background: transparent;
-        color: inherit;
-        font: inherit;
+      /* ── Table ──────────────────────────────── */
+      .table-wrap {{
+        overflow-x: auto;
+        border: 1px solid var(--rule-hvy);
+      }}
+
+      table {{
+        width: max(100%, 64rem);
+        border-collapse: collapse;
+        font-size: 0.8rem;
+      }}
+
+      thead tr {{
+        border-bottom: 3px solid var(--ink);
+        background: #f0f0ee;
+      }}
+
+      th {{
+        padding: 0.6rem 0.9rem;
         text-align: left;
-        cursor: pointer;
-        text-decoration: underline;
-        text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent);
-        text-underline-offset: 0.18em;
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-2);
+        white-space: nowrap;
+        background: #f0f0ee;
       }}
 
-      .table-link:hover {{
-        color: var(--error);
+      td {{
+        padding: 0.6rem 0.9rem;
+        border-bottom: 1px solid var(--rule);
+        vertical-align: middle;
+        color: var(--ink);
+        background: var(--page);
+      }}
+
+      tbody tr:last-child td {{ border-bottom: none; }}
+
+      tbody tr:hover td {{ background: #f7f7f5; }}
+
+      .model-col    {{ width: 17rem; }}
+      .outcome-col  {{ width: 13rem; }}
+
+      /* ── Outcome badges ─────────────────────── */
+      .outcome {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.18rem 0.55rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        border-width: 1px;
+        border-style: solid;
+      }}
+
+      .outcome-tool-call {{
+        color: var(--red);
+        background: var(--red-dim);
+        border-color: var(--red);
+      }}
+
+      .outcome-refusal {{
+        color: var(--amber);
+        background: var(--amber-dim);
+        border-color: var(--amber);
+      }}
+
+      .outcome-error {{
+        color: var(--neutral);
+        background: var(--neutral-dim);
+        border-color: #aaaaaa;
+      }}
+
+      .outcome-no-action {{
+        color: var(--neutral);
+        background: var(--neutral-dim);
+        border-color: #aaaaaa;
+      }}
+
+      .outcome-detail {{
+        font-family: var(--mono);
+        font-weight: 400;
+        font-size: 0.68rem;
+      }}
+
+      .icon-skull {{ font-size: 0.82rem; }}
+
+      .outcome-label {{ white-space: nowrap; }}
+
+      .outcome-cell {{
+        padding: 0.35rem 0.55rem;
+      }}
+
+      .outcome-trigger {{
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 0.25rem 0.25rem 0.25rem 0.45rem;
+        border: none;
+        border-left: 2px solid transparent;
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+        transform: translateX(0);
+        transition: background 0.08s ease, border-left-color 0.08s ease, transform 0.08s ease;
+      }}
+
+      .outcome-trigger:hover,
+      .outcome-trigger:focus-visible {{
+        background: rgba(8,8,8,0.045);
+        border-left-color: var(--ink);
+        transform: translateX(2px);
+      }}
+
+      .outcome-trigger:focus-visible {{
+        outline: 2px solid var(--red);
+        outline-offset: 2px;
+      }}
+
+      .outcome-trigger:hover .outcome,
+      .outcome-trigger:focus-visible .outcome {{
+        box-shadow: 0 0 0 1px currentColor;
+      }}
+
+      /* ── Model trigger ──────────────────────── */
+      .model-trigger {{
+        background: none;
+        border: none;
+        padding: 0;
+        font-family: var(--mono);
+        font-size: 0.76rem;
+        font-weight: 600;
+        color: var(--ink);
+        cursor: pointer;
+        text-align: left;
+        text-decoration: underline;
+        text-decoration-color: transparent;
+        text-underline-offset: 2px;
+        transition: color 0.12s, text-decoration-color 0.12s;
+      }}
+
+      .model-trigger:hover {{
+        color: var(--red);
+        text-decoration-color: var(--red);
       }}
 
       .flag {{
         display: inline-flex;
         align-items: center;
-        justify-content: center;
-        min-width: 1.8rem;
-        font-size: 1.2rem;
-        line-height: 1;
+        font-size: 1rem;
         cursor: help;
       }}
 
-      .icon-skull {{
-        font-size: 0.95rem;
-        line-height: 1;
-      }}
-
-      .controls {{
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 0.9rem;
-        margin: 0 0 1.25rem;
-      }}
-
-      label {{
-        display: grid;
-        gap: 0.4rem;
-        font-size: 0.9rem;
-        color: var(--muted);
-      }}
-
-      select {{
-        width: 100%;
-        padding: 0.7rem 0.8rem;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--panel);
-        color: var(--ink);
-        font: inherit;
-      }}
-
-      .empty-state {{
-        text-align: center;
-        color: var(--muted);
-      }}
-
+      /* ── Dialog ─────────────────────────────── */
       dialog {{
-        width: min(840px, calc(100vw - 2rem));
-        max-height: calc(100vh - 2rem);
+        width: min(860px, calc(100vw - 2rem));
+        max-height: calc(100dvh - 3rem);
         padding: 0;
-        border: 1px solid var(--line);
-        border-radius: 24px;
-        background: color-mix(in srgb, var(--panel) 94%, white);
-        box-shadow: 0 30px 90px rgba(42, 28, 7, 0.24);
+        border: 2px solid var(--ink);
+        border-radius: 0;
+        background: var(--page);
+        box-shadow: 6px 6px 0 rgba(0,0,0,0.15);
       }}
 
       dialog::backdrop {{
-        background: rgba(26, 19, 10, 0.55);
-        backdrop-filter: blur(4px);
+        background: rgba(0,0,0,0.5);
+        backdrop-filter: blur(2px);
       }}
 
       .popover-shell {{
-        display: grid;
-        gap: 1rem;
-        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100dvh - 3rem);
       }}
 
       .popover-header {{
         display: flex;
-        align-items: start;
+        align-items: center;
         justify-content: space-between;
         gap: 1rem;
+        padding: 0.9rem 1.25rem;
+        border-bottom: 1px solid var(--rule);
+        flex-shrink: 0;
       }}
 
       .popover-header h2 {{
-        margin: 0;
-        font-size: 1.45rem;
-        line-height: 1.1;
+        font-size: 0.9rem;
+        font-weight: 600;
+        font-family: var(--mono);
+        color: var(--ink);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }}
 
       .popover-close {{
-        padding: 0.55rem 0.85rem;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        background: var(--panel);
-        color: var(--ink);
-        font: inherit;
+        flex-shrink: 0;
+        padding: 0.28rem 0.75rem;
+        border: 1px solid var(--rule);
+        border-radius: 0;
+        background: none;
+        color: var(--ink-2);
+        font: 600 0.72rem/1.4 var(--sans);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
         cursor: pointer;
+        transition: border-color 0.1s, color 0.1s;
       }}
+
+      .popover-close:hover {{ border-color: var(--ink); color: var(--ink); }}
 
       .popover-content {{
         overflow: auto;
-        color: var(--ink);
+        padding: 1.25rem;
+        flex: 1;
       }}
 
+      /* ── Popover tabs ───────────────────────── */
+      .popover-tabs {{
+        display: flex;
+        margin-bottom: 1.1rem;
+        border-bottom: 1px solid var(--rule);
+      }}
+
+      .popover-tab {{
+        padding: 0.42rem 0.9rem;
+        border: none;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+        background: none;
+        color: var(--ink-3);
+        font: 600 0.72rem/1.4 var(--sans);
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: color 0.1s, border-bottom-color 0.1s;
+      }}
+
+      .popover-tab:hover {{ color: var(--ink); }}
+
+      .popover-tab.is-active {{
+        color: var(--ink);
+        border-bottom-color: var(--ink);
+      }}
+
+      .popover-panel[hidden] {{ display: none; }}
+
+      /* ── Popover grid ───────────────────────── */
       .popover-grid {{
         display: grid;
-        grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
-        gap: 1rem;
+        grid-template-columns: minmax(200px, 0.85fr) minmax(0, 1.15fr);
+        gap: 1.25rem;
       }}
 
-      .popover-figure {{
-        margin: 0;
-        display: grid;
-        gap: 0.6rem;
+      @media (max-width: 600px) {{
+        .popover-grid {{ grid-template-columns: 1fr; }}
       }}
+
+      .popover-figure {{ margin: 0; }}
+
+      .scenario-image-frame {{ position: relative; }}
 
       .popover-figure img {{
+        display: block;
         width: 100%;
-        max-height: 420px;
+        max-height: 400px;
         object-fit: contain;
-        border-radius: 18px;
-        border: 1px solid var(--line);
-        background:
-          linear-gradient(135deg, rgba(216, 208, 195, 0.22), rgba(255, 255, 255, 0.5)),
-          repeating-linear-gradient(
-            -45deg,
-            rgba(216, 208, 195, 0.25),
-            rgba(216, 208, 195, 0.25) 8px,
-            transparent 8px,
-            transparent 16px
-          );
+        border: 1px solid var(--rule);
+        background: repeating-linear-gradient(-45deg, #efefef 0 6px, #f9f9f9 6px 12px);
       }}
 
-      .popover-copy {{
-        display: grid;
-        gap: 0.85rem;
+      .scenario-marker {{
+        position: absolute;
+        left: 0; top: 0;
+        width: 16px; height: 16px;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--red);
+        border: 2px solid #fff;
+        box-shadow: 0 0 0 1px var(--red);
+        pointer-events: none;
       }}
 
-      .meta {{
-        margin: 0;
-        font-size: 0.84rem;
-        letter-spacing: 0.06em;
+      /* ── Section stack ──────────────────────── */
+      .section-stack {{ display: grid; gap: 0.9rem; }}
+
+      .section-stack section {{ display: grid; gap: 0.35rem; }}
+
+      .section-stack h3 {{
+        font-size: 0.64rem;
+        font-weight: 600;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
-        color: var(--muted);
+        color: var(--ink-3);
       }}
 
       .code-block {{
         margin: 0;
-        padding: 0.95rem 1rem;
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.72);
-        font-family: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
-        font-size: 0.9rem;
-        line-height: 1.55;
+        padding: 0.7rem 0.85rem;
+        border: 1px solid var(--rule);
+        background: #f5f5f5;
+        font-family: var(--mono);
+        font-size: 0.76rem;
+        line-height: 1.6;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }}
 
-      .section-stack {{
-        display: grid;
-        gap: 0.9rem;
+      .detail-chip-row {{
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
       }}
 
-      .section-stack section {{
-        display: grid;
-        gap: 0.45rem;
+      .detail-note {{
+        font-size: 0.8rem;
+        color: var(--ink-3);
       }}
 
-      .section-stack h3 {{
-        margin: 0;
-        font-size: 0.92rem;
-        letter-spacing: 0.04em;
+      .meta {{
+        font-size: 0.7rem;
+        letter-spacing: 0.07em;
         text-transform: uppercase;
-        color: var(--muted);
+        color: var(--ink-3);
+        font-family: var(--mono);
       }}
 
-      @media (max-width: 760px) {{
-        .popover-grid {{
-          grid-template-columns: 1fr;
-        }}
+      .empty-state {{
+        text-align: center;
+        padding: 2.5rem;
+        color: var(--ink-3);
+        font-style: italic;
       }}
     </style>
   </head>
   <body>
     <main>
-      <h1>Benchmark Report</h1>
-      <p>Click scenarios for the prompt and image, tools for the definition, and outcomes for the captured agent response.</p>
+      <header class="report-header">
+        <h1>Killbot Benchmark — Results Report</h1>
+        <p class="subtitle">Autonomous weapons compliance evaluation &middot; tool-use decisions under adversarial prompting</p>
+      </header>
 
-      <section class="summary" aria-label="Summary">
-        <article class="card"><strong>{total_runs}</strong><span>Total runs</span></article>
-        <article class="card"><strong>{tool_calls}</strong><span>Tool calls</span></article>
-        <article class="card"><strong>{refusals}</strong><span>Refusals</span></article>
-        <article class="card"><strong>{errors}</strong><span>Errors</span></article>
-        <article class="card"><strong>{other}</strong><span>No action</span></article>
+      <section class="summary" aria-label="Summary statistics">
+        <div class="stat"><strong>{total_runs}</strong><span>Total runs</span></div>
+        <div class="stat"><strong>{tool_calls}</strong><span>Tool calls</span></div>
+        <div class="stat"><strong>{errors}</strong><span>Errors</span></div>
+        <div class="stat"><strong>{other}</strong><span>No action</span></div>
       </section>
 
       <section class="controls" aria-label="Filters">
-        <label for="country-filter">
-          Country of origin
+        <div class="filter-group">
+          <label for="model-filter">Model</label>
+          <select id="model-filter">
+            <option value="">All models</option>
+            {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in model_options)}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="country-filter">Country of origin</label>
           <select id="country-filter">
             <option value="">All countries</option>
             {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in country_options)}
           </select>
-        </label>
-        <label for="weights-filter">
-          Weights
+        </div>
+        <div class="filter-group">
+          <label for="weights-filter">Weights</label>
           <select id="weights-filter">
             <option value="">All weight types</option>
             {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in weights_options)}
           </select>
-        </label>
-        <label for="sort-select">
-          Sort rows
-          <select id="sort-select">
-            <option value="default">Default</option>
-            <option value="intelligence-desc">Intelligence high to low</option>
-            <option value="intelligence-asc">Intelligence low to high</option>
+        </div>
+        <div class="filter-group">
+          <label for="scenario-filter">Scenario</label>
+          <select id="scenario-filter">
+            <option value="">All scenarios</option>
+            {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in scenario_options)}
           </select>
-        </label>
+        </div>
+        <div class="filter-group">
+          <label for="prompt-filter">Prompt</label>
+          <select id="prompt-filter">
+            <option value="">All prompts</option>
+            {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in prompt_options)}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="tool-variant-filter">Tool variant</label>
+          <select id="tool-variant-filter">
+            <option value="">All tool variants</option>
+            {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in tool_variant_options)}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="sort-select">Sort</label>
+          <select id="sort-select">
+            <option value="default">Default order</option>
+            <option value="intelligence-desc">Intelligence &#x2193;</option>
+            <option value="intelligence-asc">Intelligence &#x2191;</option>
+          </select>
+        </div>
       </section>
 
-      <p class="hint">Filter by model metadata, then sort by intelligence to compare outcomes.</p>
+      <p class="hint">Click a model name for metadata &middot; click an outcome to inspect response and scenario</p>
 
-      <section class="table-wrap">
+      <section class="table-wrap" aria-label="Results table">
         <table>
+          <colgroup>
+            <col class="model-col">
+            <col>
+            <col>
+            <col class="outcome-col">
+          </colgroup>
           <thead>
             <tr>
-              <th>Scenario</th>
               <th>Model</th>
-              <th>Country</th>
-              <th>Weights</th>
-              <th>Intelligence</th>
+              <th>Scenario</th>
               <th>Prompt</th>
               <th>Tool Variant</th>
               <th>Outcome</th>
             </tr>
           </thead>
           <tbody id="results-body">
-{chr(10).join(rows) if rows else '            <tr><td colspan="8" class="empty-state">No records found.</td></tr>'}
+{chr(10).join(rows) if rows else '            <tr><td colspan="5" class="empty-state">No records found.</td></tr>'}
           </tbody>
         </table>
       </section>
@@ -562,10 +757,14 @@ def write_html_report(records: list[dict], path: Path) -> None:
         <div class="popover-content" id="popover-content"></div>
       </div>
     </dialog>
-    <script id="popover-data" type="application/json">{html.escape(json.dumps(popovers, ensure_ascii=False), quote=False)}</script>
+    <script id="popover-data" type="application/json">{_json_for_html_script_tag(popovers)}</script>
     <script>
+      const modelFilter = document.getElementById("model-filter");
       const countryFilter = document.getElementById("country-filter");
       const weightsFilter = document.getElementById("weights-filter");
+      const scenarioFilter = document.getElementById("scenario-filter");
+      const promptFilter = document.getElementById("prompt-filter");
+      const toolVariantFilter = document.getElementById("tool-variant-filter");
       const sortSelect = document.getElementById("sort-select");
       const tableBody = document.getElementById("results-body");
       const popoverData = JSON.parse(document.getElementById("popover-data").textContent);
@@ -584,9 +783,13 @@ def write_html_report(records: list[dict], path: Path) -> None:
       }}
 
       function rowMatches(row) {{
+        const modelMatch = !modelFilter.value || row.dataset.model === modelFilter.value;
         const countryMatch = !countryFilter.value || row.dataset.country === countryFilter.value;
         const weightsMatch = !weightsFilter.value || row.dataset.weights === weightsFilter.value;
-        return countryMatch && weightsMatch;
+        const scenarioMatch = !scenarioFilter.value || row.dataset.scenario === scenarioFilter.value;
+        const promptMatch = !promptFilter.value || row.dataset.prompt === promptFilter.value;
+        const toolVariantMatch = !toolVariantFilter.value || row.dataset.toolVariant === toolVariantFilter.value;
+        return modelMatch && countryMatch && weightsMatch && scenarioMatch && promptMatch && toolVariantMatch;
       }}
 
       function compareRows(left, right) {{
@@ -624,7 +827,7 @@ def write_html_report(records: list[dict], path: Path) -> None:
         tableBody.innerHTML = "";
 
         if (!visibleRows.length) {{
-          tableBody.innerHTML = '<tr><td colspan="8" class="empty-state">No rows match the selected filters.</td></tr>';
+          tableBody.innerHTML = '<tr><td colspan="5" class="empty-state">No rows match the selected filters.</td></tr>';
           return;
         }}
 
@@ -640,17 +843,95 @@ def write_html_report(records: list[dict], path: Path) -> None:
         }}
         popoverTitle.textContent = item.title || "Details";
         popoverContent.innerHTML = item.body_html || "<p>No details available.</p>";
+        activateDetailTab(popoverContent, "outcome");
         if (popoverDialog.open) {{
           popoverDialog.close();
         }}
         popoverDialog.showModal();
+        requestAnimationFrame(() => layoutScenarioMarkers(popoverContent));
       }}
 
+      function clampCoordinate(value) {{
+        return Math.min(100, Math.max(0, value));
+      }}
+
+      function positionScenarioMarker(frame) {{
+        const marker = frame.querySelector(".scenario-marker");
+        const image = frame.querySelector("img");
+        if (!marker || !image) {{
+          return;
+        }}
+
+        const x = Number.parseFloat(marker.dataset.x || "");
+        const y = Number.parseFloat(marker.dataset.y || "");
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {{
+          return;
+        }}
+
+        if (!image.clientWidth || !image.clientHeight) {{
+          return;
+        }}
+
+        const leftInset = 5.5;
+        const rightInset = 4.5;
+        const bottomInset = 5.5;
+        const topInset = 4.5;
+        const normalizedX = leftInset + (clampCoordinate(x) / 100) * (100 - leftInset - rightInset);
+        const normalizedY = bottomInset + (clampCoordinate(y) / 100) * (100 - bottomInset - topInset);
+        const leftPx = (normalizedX / 100) * image.clientWidth;
+        const topPx = ((100 - normalizedY) / 100) * image.clientHeight;
+
+        marker.style.left = `${{leftPx}}px`;
+        marker.style.top = `${{topPx}}px`;
+      }}
+
+      function layoutScenarioMarkers(root) {{
+        const frames = root.querySelectorAll(".scenario-image-frame");
+        for (const frame of frames) {{
+          const image = frame.querySelector("img");
+          if (!image) {{
+            continue;
+          }}
+
+          const render = () => positionScenarioMarker(frame);
+          if (image.complete) {{
+            requestAnimationFrame(render);
+          }} else {{
+            image.addEventListener("load", render, {{ once: true }});
+          }}
+        }}
+      }}
+
+      function activateDetailTab(root, tabName) {{
+        const tabs = root.querySelectorAll("[data-tab-target]");
+        const panels = root.querySelectorAll("[data-tab-panel]");
+        for (const tab of tabs) {{
+          const isActive = tab.dataset.tabTarget === tabName;
+          tab.classList.toggle("is-active", isActive);
+          tab.setAttribute("aria-selected", isActive ? "true" : "false");
+        }}
+        for (const panel of panels) {{
+          const isActive = panel.dataset.tabPanel === tabName;
+          panel.hidden = !isActive;
+        }}
+        requestAnimationFrame(() => layoutScenarioMarkers(root));
+      }}
+
+      modelFilter.addEventListener("change", renderRows);
       countryFilter.addEventListener("change", renderRows);
       weightsFilter.addEventListener("change", renderRows);
+      scenarioFilter.addEventListener("change", renderRows);
+      promptFilter.addEventListener("change", renderRows);
+      toolVariantFilter.addEventListener("change", renderRows);
       sortSelect.addEventListener("change", renderRows);
+      window.addEventListener("resize", () => layoutScenarioMarkers(popoverContent));
       popoverClose.addEventListener("click", () => popoverDialog.close());
       document.addEventListener("click", (event) => {{
+        const tab = event.target.closest("[data-tab-target]");
+        if (tab) {{
+          activateDetailTab(popoverContent, tab.dataset.tabTarget);
+          return;
+        }}
         const trigger = event.target.closest("[data-popover-id]");
         if (!trigger) {{
           return;
@@ -725,30 +1006,21 @@ def _outcome_class(outcome: str) -> str:
     return outcome.lower().replace(" ", "-")
 
 
-def _hover_detail(record: dict) -> str:
-    parts: list[str] = []
-
-    if record.get("tool_name"):
-        if record.get("x") is not None and record.get("y") is not None:
-            parts.append(f"Tool: {record['tool_name']}({record['x']}, {record['y']})")
-        else:
-            parts.append(f"Tool: {record['tool_name']}")
-    if record.get("tool_variant_id"):
-        parts.append(f"Tool variant: {record['tool_variant_id']}")
-
-    for key, label in (("refusal_text", "Refusal"), ("answer_text", "Text"), ("error", "Error")):
-        value = record.get(key)
-        if value:
-            compact = " ".join(str(value).split())
-            parts.append(f"{label}: {compact}")
-
-    return " | ".join(parts)
-
-
 def _register_popover(popovers: dict[str, dict[str, str]], title: str, body_html: str) -> str:
     key = f"popover-{len(popovers)}"
     popovers[key] = {"title": title, "body_html": body_html}
     return key
+
+
+def _json_for_html_script_tag(value: object) -> str:
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
 
 
 def _country_display(country: str) -> str:
@@ -771,48 +1043,133 @@ def _country_display(country: str) -> str:
     )
 
 
-def _outcome_label_html(outcome: str) -> str:
+def _model_cell_markup(model_id: str, popover_id: str) -> str:
+    escaped_model_id = html.escape(model_id or "Unknown")
+    if not popover_id:
+        return escaped_model_id
+    model_label = html.escape(model_id or "Unknown", quote=True)
+    return (
+        f'<button type="button" class="model-trigger" data-popover-id="{html.escape(popover_id, quote=True)}" '
+        f'aria-label="Show model info for {model_label}">{escaped_model_id}</button>'
+    )
+
+
+def _outcome_label_html(outcome: str, record: dict) -> str:
     label = html.escape(outcome)
     if outcome == "Tool call":
-        return f'<span class="icon-skull" aria-hidden="true">&#9760;</span><span>{label}</span>'
-    return f"<span>{label}</span>"
+        coordinate_text = _formatted_coordinate_pair(record)
+        detail = f' <span class="outcome-detail">{html.escape(coordinate_text)}</span>' if coordinate_text else ""
+        return f'<span class="icon-skull" aria-hidden="true">&#9760;</span><span class="outcome-label">{label}</span>{detail}'
+    return f'<span class="outcome-label">{label}</span>'
 
 
-def _scenario_popover_body(record: dict) -> str:
-    image_markup = _scenario_image_markup(record)
-    prompt_text = str(record.get("prompt_text", "")).strip() or "Prompt text unavailable in this result file."
-    prompt_id = str(record.get("prompt_id", "")).strip()
-    scenario_description = str(record.get("scenario_description", "")).strip()
-
-    description_markup = (
-        f"<p>{html.escape(scenario_description)}</p>" if scenario_description else "<p>No scenario description provided.</p>"
+def _details_popover_body(record: dict) -> str:
+    return (
+        '<div class="detail-tabs">'
+        '<div class="popover-tabs" role="tablist" aria-label="Detail sections">'
+        '<button type="button" class="popover-tab is-active" data-tab-target="outcome" aria-selected="true">Outcome</button>'
+        '<button type="button" class="popover-tab" data-tab-target="scenario" aria-selected="false">Scenario</button>'
+        "</div>"
+        f'<div class="popover-panel" data-tab-panel="outcome">{_outcome_popover_body(record)}</div>'
+        f'<div class="popover-panel" data-tab-panel="scenario" hidden>{_scenario_popover_body(record)}</div>'
+        "</div>"
     )
+
+
+def _outcome_popover_body(record: dict) -> str:
+    sections: list[str] = []
+    sections.append(
+        '<section>'
+        "<h3>Tool call</h3>"
+        f"{_tool_call_summary_markup(record)}"
+        "</section>"
+    )
+
+    agent_response = _agent_message(record)
+    for heading, value in (
+        ("Content", _stringify_message_value(agent_response.get("content")) if agent_response else ""),
+        ("Reasoning", _stringify_message_value(agent_response.get("reasoning")) if agent_response else ""),
+        ("Text response", _stringify_message_value(record.get("answer_text"))),
+        ("Error", _stringify_message_value(record.get("error"))),
+    ):
+        if value:
+            sections.append(_popover_section(heading, value))
+
+    if len(sections) == 1:
+        sections.append(_popover_section("Agent output", "No response details were captured for this record."))
 
     return (
         '<div class="popover-grid">'
-        f"{image_markup}"
-        '<div class="popover-copy">'
-        f'<p class="meta">Prompt {html.escape(prompt_id or "Unknown")}</p>'
-        f"{description_markup}"
-        f'<pre class="code-block">{html.escape(prompt_text)}</pre>'
-        "</div>"
+        f"{_scenario_image_markup(record, include_marker=bool(record.get('called_tool')))}"
+        f'<div class="section-stack">{"".join(sections)}</div>'
         "</div>"
     )
 
 
-def _scenario_image_markup(record: dict) -> str:
+def _model_info_popover_body(record: dict) -> str:
+    model_id = str(record.get("model_id", "")).strip() or "Unknown model"
+    country = str(record.get("model_country_of_origin", "")).strip()
+    weights = str(record.get("model_weights", "")).strip()
+    intelligence = str(record.get("model_artificial_analysis_benchmark_intelligence", "")).strip()
+    lines = [
+        f"Model: {model_id}",
+        f"Country of origin: {country or 'Unknown'}",
+        f"Weights: {weights or 'Unknown'}",
+        f"Intelligence: {intelligence or 'Unknown'}",
+    ]
+    return (
+        '<div class="section-stack">'
+        f"{_popover_section('Model info', chr(10).join(lines))}"
+        "</div>"
+    )
+
+
+def _scenario_popover_body(record: dict) -> str:
+    prompt_text = str(record.get("prompt_text", "")).strip() or "Prompt text unavailable in this result file."
+    prompt_id = str(record.get("prompt_id", "")).strip()
+    tool_variant_id = str(record.get("tool_variant_id", "")).strip()
+    scenario_description = str(record.get("scenario_description", "")).strip()
+
+    sections = []
+    if scenario_description:
+        sections.append(_popover_section("Scenario", scenario_description))
+    sections.append(_popover_section(f"System prompt{f' ({prompt_id})' if prompt_id else ''}", prompt_text))
+    sections.append(_popover_section(f"Tool description{f' ({tool_variant_id})' if tool_variant_id else ''}", _tool_description_text(record)))
+
+    return (
+        '<div class="popover-grid">'
+        f"{_scenario_image_markup(record, include_marker=False)}"
+        f'<div class="section-stack">{"".join(sections)}</div>'
+        "</div>"
+    )
+
+
+def _scenario_image_markup(record: dict, *, include_marker: bool) -> str:
     image_path = str(record.get("image_path", "")).strip()
     scenario_label = str(record.get("scenario_label", "")).strip() or str(record.get("scenario_id", "")).strip()
+    marker_x = _coerce_coordinate(record.get("x"))
+    marker_y = _coerce_coordinate(record.get("y"))
     if image_path:
         try:
             image_uri = Path(image_path).expanduser().resolve().as_uri()
         except ValueError:
             image_uri = ""
         if image_uri:
+            marker_markup = ""
+            if include_marker and marker_x is not None and marker_y is not None:
+                coordinate_text = _formatted_coordinate_pair(record) or "(unknown)"
+                marker_markup = (
+                    f'<span class="scenario-marker" data-x="{_format_coordinate_value(marker_x)}" '
+                    f'data-y="{_format_coordinate_value(marker_y)}" '
+                    f'aria-label="Selected coordinates {html.escape(coordinate_text, quote=True)}"></span>'
+                )
             return (
                 '<figure class="popover-figure">'
+                '<div class="scenario-image-frame">'
                 f'<img src="{html.escape(image_uri, quote=True)}" alt="{html.escape(scenario_label or "Scenario image", quote=True)}">'
-                f"<figcaption>{html.escape(image_path)}</figcaption>"
+                f"{marker_markup}"
+                "</div>"
+                # f"<figcaption>{html.escape(image_path)}</figcaption>"
                 "</figure>"
             )
 
@@ -823,50 +1180,32 @@ def _scenario_image_markup(record: dict) -> str:
     )
 
 
-def _tool_popover_body(record: dict) -> str:
+def _tool_call_summary_markup(record: dict) -> str:
+    if record.get("called_tool"):
+        tool_name = str(record.get("tool_name", "")).strip() or str(record.get("tool_variant_function_name", "")).strip() or "Unknown"
+        return (
+            '<div class="detail-chip-row">'
+            f'<span class="outcome outcome-{_outcome_class("Tool call")}">{_outcome_label_html("Tool call", record)}</span>'
+            f'<span class="detail-note">{html.escape(tool_name)}</span>'
+            "</div>"
+        )
+
+    if record.get("refused"):
+        return '<p class="detail-note">No tool was called. The model refused.</p>'
+    if record.get("error"):
+        return '<p class="detail-note">No tool was called because the run ended with an error.</p>'
+    return '<p class="detail-note">No tool was called for this response.</p>'
+
+
+def _tool_description_text(record: dict) -> str:
     tool_definition = record.get("tool_definition")
     if tool_definition:
         definition_text = json.dumps(tool_definition, ensure_ascii=False, indent=2, sort_keys=True)
     else:
         definition_text = "Tool definition unavailable in this result file."
 
-    return (
-        '<div class="section-stack">'
-        "<section>"
-        "<h3>Function</h3>"
-        f'<pre class="code-block">{html.escape(str(record.get("tool_variant_function_name", "")).strip() or "Unknown")}</pre>'
-        "</section>"
-        "<section>"
-        "<h3>Definition</h3>"
-        f'<pre class="code-block">{html.escape(definition_text)}</pre>'
-        "</section>"
-        "</div>"
-    )
-
-
-def _agent_response_popover_body(record: dict) -> str:
-    sections = []
-
-    summary = _hover_detail(record)
-    if summary:
-        sections.append(_popover_section("Summary", summary))
-
-    for heading, key in (("Agent text", "answer_text"), ("Refusal", "refusal_text"), ("Error", "error")):
-        raw_value = record.get(key)
-        if raw_value is None:
-            continue
-        value = str(raw_value).strip()
-        if value:
-            sections.append(_popover_section(heading, value))
-
-    message = _agent_message(record)
-    if message:
-        sections.append(_popover_section("Agent response", json.dumps(message, ensure_ascii=False, indent=2, sort_keys=True)))
-
-    if not sections:
-        sections.append(_popover_section("Details", "No response details were captured for this record."))
-
-    return f'<div class="section-stack">{"".join(sections)}</div>'
+    function_name = str(record.get("tool_variant_function_name", "")).strip() or "Unknown"
+    return f"Function: {function_name}\n\nDefinition:\n{definition_text}"
 
 
 def _popover_section(title: str, body: str) -> str:
@@ -899,3 +1238,39 @@ def _agent_message(record: dict) -> dict | None:
     if isinstance(message, dict) and message:
         return message
     return None
+
+
+def _stringify_message_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+    return str(value).strip()
+
+
+def _formatted_coordinate_pair(record: dict) -> str | None:
+    x = _coerce_coordinate(record.get("x"))
+    y = _coerce_coordinate(record.get("y"))
+    if x is None or y is None:
+        return None
+    return f"({_format_coordinate_value(x)}, {_format_coordinate_value(y)})"
+
+
+def _coerce_coordinate(value: object) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        coordinate = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    return min(100.0, max(0.0, coordinate))
+
+
+def _format_coordinate_value(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:g}"
