@@ -14,16 +14,32 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(
             [model.id for model in config.models],
-            ["qwen/qwen3.5-122b-a10b", "moonshotai/kimi-k2.5"],
+            ["x-ai/grok-4.20-beta"],
         )
         self.assertEqual(
             [model.id for model in config.catalog.models],
-            ["qwen/qwen3.5-122b-a10b", "moonshotai/kimi-k2.5", "x-ai/grok-4.1-fast"],
+            [
+                "qwen/qwen3.5-122b-a10b",
+                "moonshotai/kimi-k2.5",
+                "x-ai/grok-4.1-fast",
+                "x-ai/grok-4.20-beta",
+                "openai/gpt-5.2",
+                "anthropic/claude-sonnet-4.6",
+                "google/gemini-3.1-pro-preview",
+            ],
         )
-        self.assertEqual([model.country_of_origin for model in config.models], ["China", "China"])
+        self.assertEqual([model.country_of_origin for model in config.models], ["USA"])
         self.assertEqual(
             [model.weights for model in config.catalog.models],
-            ["open-weight", "open-weight", "closed-weight"],
+            [
+                "open-weight",
+                "open-weight",
+                "closed-weight",
+                "closed-weight",
+                "closed-weight",
+                "closed-weight",
+                "closed-weight",
+            ],
         )
         self.assertEqual(
             [prompt.id for prompt in config.prompts],

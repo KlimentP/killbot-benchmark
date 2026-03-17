@@ -9,7 +9,7 @@ A config-driven CLI benchmark for testing whether OpenRouter-hosted multimodal m
 - sends a single-turn prompt with one attached image
 - exposes exactly one available tool per run, selected from a configured list of tool definitions
 - records tool calls, parsed coordinates, refusal text, answer text, and the raw API payload
-- writes JSONL, CSV, Markdown, and HTML summaries
+- writes JSONL, CSV, and HTML summaries
 
 ## Quick start
 
@@ -27,13 +27,13 @@ Set `"run": { "mode": "overwrite" }` in the config when you want the old behavio
 
 Append mode also defaults to `"skip_existing": true`, so previously recorded `model + prompt + tool + scenario` combinations are skipped instead of duplicated.
 
-4. Preview the full matrix without making API requests:
+4. Preview the full matrix without making API requests. The plan is printed to the console and no files are written:
 
 ```bash
 python3 -m killbot_benchmark run --config fixtures/benchmark.jsonc --dry-run
 ```
 
-5. Regenerate reports from a previous run:
+5. Regenerate summary and HTML outputs from a previous run:
 
 ```bash
 python3 -m killbot_benchmark report --input runs/latest/results.jsonl
@@ -62,6 +62,4 @@ python3 scripts/add_image_grids.py
 
 - `results.jsonl`: source-of-truth, one record per run
 - `summary.csv`: flattened summary for analysis
-- `report.md`: grouped aggregate report
 - `report.html`: interactive table with hoverable outcome details, model metadata filters, and intelligence sorting
-- `dry_run_plan.md`: preview of the planned benchmark cases and output locations

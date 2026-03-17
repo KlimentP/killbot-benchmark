@@ -23,7 +23,6 @@ from killbot_benchmark.reporting import (
     append_jsonl,
     load_jsonl,
     write_html_report,
-    write_markdown_report,
     write_summary_csv,
 )
 
@@ -56,8 +55,7 @@ def run_benchmark(
     archive_root = latest_dir.parent / "archive"
 
     if dry_run:
-        latest_dir.mkdir(parents=True, exist_ok=True)
-        return write_dry_run_plan(config, latest_dir / "dry_run_plan.md")
+        return {}
 
     client = client or OpenRouterClient(config.run)
 
@@ -68,7 +66,6 @@ def run_benchmark(
 
     results_path = latest_dir / "results.jsonl"
     summary_path = latest_dir / "summary.csv"
-    report_path = latest_dir / "report.md"
     html_report_path = latest_dir / "report.html"
     existing_records = load_jsonl(results_path) if results_path.exists() else []
     all_cases = build_cases(config)
@@ -103,18 +100,16 @@ def run_benchmark(
 
     records = load_jsonl(results_path)
     write_summary_csv(records, summary_path)
-    write_markdown_report(records, report_path)
     write_html_report(records, html_report_path)
 
     return {
         "results": results_path,
         "summary": summary_path,
-        "report": report_path,
         "html_report": html_report_path,
     }
 
 
-def write_dry_run_plan(config: BenchmarkConfig, output_path: Path) -> dict[str, Path]:
+def render_dry_run_plan(config: BenchmarkConfig) -> str:
     latest_dir = _latest_output_dir(config.run.output_dir)
     archive_root = latest_dir.parent / "archive"
     results_path = latest_dir / "results.jsonl"
@@ -131,7 +126,6 @@ def write_dry_run_plan(config: BenchmarkConfig, output_path: Path) -> dict[str, 
         f"Archive directory: {archive_root}",
         f"Results path: {latest_dir / 'results.jsonl'}",
         f"Summary path: {latest_dir / 'summary.csv'}",
-        f"Report path: {latest_dir / 'report.md'}",
         f"HTML report path: {latest_dir / 'report.html'}",
         "",
         "## Run settings",
@@ -159,8 +153,7 @@ def write_dry_run_plan(config: BenchmarkConfig, output_path: Path) -> dict[str, 
         lines.append(
             f"| {case.model.id} | {case.prompt.id} | {case.tool.id} | {case.scenario.id} | {case.scenario.image_path} |"
         )
-    output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    return {"dry_run_plan": output_path}
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def regenerate_reports(
@@ -177,11 +170,8 @@ def regenerate_reports(
         return outputs
 
     summary_path = target_dir / "summary.csv"
-    report_path = target_dir / "report.md"
     write_summary_csv(records, summary_path)
-    write_markdown_report(records, report_path)
     outputs["summary"] = summary_path
-    outputs["report"] = report_path
     return outputs
 
 

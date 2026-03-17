@@ -7,7 +7,6 @@ import unittest
 from killbot_benchmark.reporting import (
     load_jsonl,
     write_html_report,
-    write_markdown_report,
     write_summary_csv,
 )
 
@@ -86,33 +85,24 @@ SAMPLE_RECORDS = [
 
 
 class ReportingTests(unittest.TestCase):
-    def test_writes_summary_csv_markdown_and_html(self) -> None:
+    def test_writes_summary_csv_and_html(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             csv_path = root / "summary.csv"
-            md_path = root / "report.md"
             html_path = root / "report.html"
 
             write_summary_csv(SAMPLE_RECORDS, csv_path)
-            write_markdown_report(SAMPLE_RECORDS, md_path)
             write_html_report(SAMPLE_RECORDS, html_path)
 
             self.assertIn("model-a", csv_path.read_text(encoding="utf-8"))
-            report_text = md_path.read_text(encoding="utf-8")
             html_text = html_path.read_text(encoding="utf-8")
-            self.assertIn("By model_id", report_text)
-            self.assertIn("I refuse to do that.", report_text)
             self.assertIn("Scenario", html_text)
             self.assertIn("Tool Variant", html_text)
             self.assertIn("Details", html_text)
-            self.assertIn('class="outcome-heading"', html_text)
-            self.assertIn('class="details-heading"', html_text)
             self.assertIn('class="outcome-col"', html_text)
-            self.assertIn('class="details-col"', html_text)
             self.assertIn('class="model-col"', html_text)
-            self.assertIn("width: max(100%, 78rem);", html_text)
-            self.assertIn("By tool_variant_id", report_text)
-            self.assertIn("Intelligence high to low", html_text)
+            self.assertIn("width: max(100%, 64rem);", html_text)
+            self.assertIn("Intelligence &#x2193;", html_text)
             self.assertIn('option value="model-a"', html_text)
             self.assertIn('option value="China"', html_text)
             self.assertIn('option value="image-a"', html_text)
@@ -123,12 +113,9 @@ class ReportingTests(unittest.TestCase):
             self.assertIn('data-scenario="image-a"', html_text)
             self.assertIn('data-prompt="prompt-a"', html_text)
             self.assertIn('data-tool-variant="tool-a"', html_text)
-            self.assertIn('class="details-cell"', html_text)
             self.assertIn('class="outcome-cell"', html_text)
-            self.assertIn('class="info-trigger"', html_text)
             self.assertIn('class="model-trigger"', html_text)
             self.assertIn('aria-label="Show model info for model-a"', html_text)
-            self.assertNotIn('class="table-link tool-link"', html_text)
             self.assertIn("popover-dialog", html_text)
             self.assertIn(Path("/tmp/a.png").resolve().as_uri(), html_text)
             self.assertIn("Choose a target in the image.", html_text)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from killbot_benchmark.config import load_config
 from killbot_benchmark.env import load_dotenv
-from killbot_benchmark.runner import regenerate_reports, run_benchmark
+from killbot_benchmark.runner import regenerate_reports, render_dry_run_plan, run_benchmark
 
 
 def main() -> None:
@@ -29,7 +29,9 @@ def main() -> None:
         help="Preview the benchmark plan and output paths without making API requests.",
     )
 
-    report_parser = subparsers.add_parser("report", help="Regenerate summary files from JSONL.")
+    report_parser = subparsers.add_parser(
+        "report", help="Regenerate summary.csv and report.html from JSONL."
+    )
     report_parser.add_argument("--input", required=True, help="Path to a results.jsonl file.")
     report_parser.add_argument("--output-dir", help="Optional output directory for regenerated reports.")
     report_parser.add_argument(
@@ -43,7 +45,10 @@ def main() -> None:
     try:
         if args.command == "run":
             config = load_config(args.config)
-            outputs = run_benchmark(config, dry_run=args.dry_run)
+            if args.dry_run:
+                print(render_dry_run_plan(config), end="")
+                return
+            outputs = run_benchmark(config)
         else:
             output_dir = Path(args.output_dir).resolve() if args.output_dir else None
             outputs = regenerate_reports(

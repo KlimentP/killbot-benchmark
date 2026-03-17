@@ -10,8 +10,8 @@ from killbot_benchmark.runner import (
     build_cases,
     normalize_result,
     regenerate_reports,
+    render_dry_run_plan,
     run_benchmark,
-    write_dry_run_plan,
 )
 
 
@@ -151,7 +151,6 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(outputs["results"], latest_dir / "results.jsonl")
             self.assertTrue(outputs["results"].exists())
             self.assertTrue(outputs["summary"].exists())
-            self.assertTrue(outputs["report"].exists())
             self.assertTrue(outputs["html_report"].exists())
 
     def test_run_benchmark_executes_all_cases_in_parallel(self) -> None:
@@ -184,7 +183,7 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(fake.max_parallel_calls, expected_parallelism)
 
-    def test_write_dry_run_plan_lists_all_cases_without_using_client(self) -> None:
+    def test_render_dry_run_plan_lists_all_cases_without_using_client(self) -> None:
         config = load_config(ROOT / "fixtures" / "benchmark.jsonc")
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -206,10 +205,7 @@ class RunnerTests(unittest.TestCase):
                 ),
                 catalog=config.catalog,
             )
-            outputs = write_dry_run_plan(sandbox_config, Path(tmp_dir) / "dry_run_plan.md")
-
-            self.assertEqual(outputs["dry_run_plan"], Path(tmp_dir) / "dry_run_plan.md")
-            contents = outputs["dry_run_plan"].read_text(encoding="utf-8")
+            contents = render_dry_run_plan(sandbox_config)
             self.assertIn(f"Planned runs: {len(build_cases(config))}", contents)
             self.assertIn("Mode: append", contents)
             self.assertIn(
@@ -221,9 +217,9 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("Skip existing: True", contents)
             self.assertIn(f"Latest directory: {Path(tmp_dir) / 'latest'}", contents)
             self.assertIn(f"Archive directory: {Path(tmp_dir) / 'archive'}", contents)
-            self.assertIn("qwen/qwen3.5-122b-a10b", contents)
-            self.assertIn("missile-strike-default", contents)
-            self.assertIn("two-people", contents)
+            self.assertIn(config.models[0].id, contents)
+            self.assertIn(config.tools[0].id, contents)
+            self.assertIn(config.scenarios[0].id, contents)
 
     def test_run_benchmark_dry_run_skips_results_and_summary_outputs(self) -> None:
         config = load_config(ROOT / "fixtures" / "benchmark.jsonc")
@@ -249,11 +245,9 @@ class RunnerTests(unittest.TestCase):
             )
             outputs = run_benchmark(sandbox_config, dry_run=True)
 
-            self.assertEqual(set(outputs), {"dry_run_plan"})
-            self.assertTrue(outputs["dry_run_plan"].exists())
+            self.assertEqual(outputs, {})
             self.assertFalse((Path(tmp_dir) / "latest" / "results.jsonl").exists())
             self.assertFalse((Path(tmp_dir) / "latest" / "summary.csv").exists())
-            self.assertFalse((Path(tmp_dir) / "latest" / "report.md").exists())
             self.assertFalse((Path(tmp_dir) / "latest" / "report.html").exists())
 
     def test_regenerate_reports(self) -> None:
@@ -266,7 +260,6 @@ class RunnerTests(unittest.TestCase):
             )
             outputs = regenerate_reports(input_path)
             self.assertTrue(outputs["summary"].exists())
-            self.assertTrue(outputs["report"].exists())
             self.assertTrue(outputs["html_report"].exists())
 
     def test_regenerate_reports_enriches_html_from_nearby_config(self) -> None:
@@ -311,7 +304,6 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(set(outputs), {"html_report"})
             self.assertTrue(outputs["html_report"].exists())
             self.assertFalse((target_dir / "summary.csv").exists())
-            self.assertFalse((target_dir / "report.md").exists())
 
     def test_run_benchmark_archives_existing_latest_before_writing_new_results(self) -> None:
         config = load_config(ROOT / "fixtures" / "benchmark.jsonc")
@@ -393,9 +385,9 @@ class RunnerTests(unittest.TestCase):
             latest_dir = Path(tmp_dir) / "latest"
             latest_dir.mkdir(parents=True, exist_ok=True)
             existing_case = (
-                '{"run_id":"old","timestamp":"t","model_id":"qwen/qwen3.5-122b-a10b",'
-                '"prompt_id":"fake-game","tool_variant_id":"missile-strike-default",'
-                '"scenario_id":"two-people","called_tool":false,"refused":true}\n'
+                f'{{"run_id":"old","timestamp":"t","model_id":"{config.models[0].id}",'
+                f'"prompt_id":"{config.prompts[0].id}","tool_variant_id":"{config.tools[0].id}",'
+                f'"scenario_id":"{config.scenarios[0].id}","called_tool":false,"refused":true}}\n'
             )
             (latest_dir / "results.jsonl").write_text(existing_case, encoding="utf-8")
 
@@ -446,9 +438,12 @@ class RunnerTests(unittest.TestCase):
             error="boom",
         )
 
-        self.assertEqual(record["model_country_of_origin"], "China")
-        self.assertEqual(record["model_weights"], "open-weight")
-        self.assertEqual(record["model_artificial_analysis_benchmark_intelligence"], "45")
+        self.assertEqual(record["model_country_of_origin"], config.models[0].country_of_origin)
+        self.assertEqual(record["model_weights"], config.models[0].weights)
+        self.assertEqual(
+            record["model_artificial_analysis_benchmark_intelligence"],
+            config.models[0].artificial_analysis_benchmark_intelligence,
+        )
         self.assertEqual(record["prompt_source_path"], str(config.prompts[0].source_path))
 
 
