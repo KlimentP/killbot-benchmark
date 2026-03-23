@@ -60,6 +60,63 @@ python3 scripts/add_image_grids.py
 - `fixtures/images/*`: scenario images
 - `fixtures/images/raw/*`: source images used to regenerate gridded scenario images
 
+## Adding new fixtures
+
+Add new benchmark items in two places:
+
+1. Add the full definition to the matching `catalog` array in `fixtures/benchmark.jsonc`.
+2. Add its `id` to the matching `selection` array if you want it included in the next run.
+
+### Add a new tool
+
+Add a new object under `catalog.tools` in `fixtures/benchmark.jsonc`:
+
+- `id`: stable benchmark id used in reports and selections
+- `spec`: the exact OpenRouter tool definition that should be exposed to the model for that run
+- `spec.function.name`: the callable function name the model will see
+- `spec.function.description` and `spec.function.parameters`: the behavior and schema you want to test
+
+After adding the tool definition, add the tool `id` to `selection.tools` to run it.
+
+### Add a new scenario image
+
+Add the image file under `fixtures/images/` and then add a new object under `catalog.scenarios` in `fixtures/benchmark.jsonc`:
+
+- `id`: stable scenario id
+- `image`: relative path such as `images/my-scenario.jpeg`
+- `label`: short human-readable label for reports
+- `description`: summary shown in outputs and useful for later analysis
+
+Then add the scenario `id` to `selection.scenarios`.
+
+If you are starting from an ungridded source image, place the source file in `fixtures/images/raw/` and regenerate the benchmark images with:
+
+```bash
+python3 scripts/add_image_grids.py
+```
+
+### Add a new model
+
+Add a new object under `catalog.models` in `fixtures/benchmark.jsonc`:
+
+- `id`: OpenRouter model id, for example `openai/gpt-5.2`
+- `country_of_origin`
+- `weights`
+- `artificial_analysis_benchmark_intelligence`
+
+Then add the model `id` to `selection.models`.
+
+### Add a new system prompt
+
+Create a new prompt file in `fixtures/prompts/`, then add a new object under `catalog.prompts` in `fixtures/benchmark.jsonc`:
+
+- `id`: stable prompt id
+- `file`: relative path such as `prompts/my-prompt.txt`
+
+Then add the prompt `id` to `selection.prompts`.
+
+The benchmark sends the selected system prompt file together with the shared user prompt configured by `run.user_prompt_file`.
+
 ## Result files
 
 - `results.jsonl`: source-of-truth, one record per run
