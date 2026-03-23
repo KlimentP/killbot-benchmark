@@ -22,6 +22,7 @@ from killbot_benchmark.openrouter import OpenRouterClient
 from killbot_benchmark.reporting import (
     append_jsonl,
     load_jsonl,
+    normalize_image_path,
     write_html_report,
     write_jsonl,
     write_summary_csv,
@@ -278,7 +279,7 @@ def normalize_result(
         "scenario_id": case.scenario.id,
         "scenario_label": case.scenario.label,
         "scenario_description": case.scenario.description,
-        "image_path": str(case.scenario.image_path),
+        "image_path": normalize_image_path(str(case.scenario.image_path)),
         "called_tool": bool(tool_call),
         "tool_name": tool_call.get("name"),
         "x": arguments.get("x"),
@@ -432,7 +433,7 @@ def _enrich_records_from_config(records: list[dict[str, Any]], input_path: Path)
             if not enriched.get("scenario_description"):
                 enriched["scenario_description"] = scenario.description
             if not enriched.get("image_path"):
-                enriched["image_path"] = str(scenario.image_path)
+                enriched["image_path"] = normalize_image_path(str(scenario.image_path))
 
         enriched_records.append(enriched)
 

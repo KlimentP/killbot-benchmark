@@ -5,11 +5,14 @@ import html
 import json
 from pathlib import Path
 
+GITHUB_REPO_RAW_BASE = "https://raw.githubusercontent.com/KlimentP/killbot-benchmark/master"
+
 
 def append_jsonl(path: Path, record: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    normalized_record = _normalize_record_image_path(record)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
+        handle.write(json.dumps(normalized_record, ensure_ascii=True, sort_keys=True))
         handle.write("\n")
 
 
@@ -17,7 +20,8 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for record in records:
-            handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
+            normalized_record = _normalize_record_image_path(record)
+            handle.write(json.dumps(normalized_record, ensure_ascii=True, sort_keys=True))
             handle.write("\n")
 
 
@@ -58,7 +62,8 @@ def write_summary_csv(records: list[dict], path: Path) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for record in records:
-            writer.writerow({name: record.get(name) for name in fieldnames})
+            normalized_record = _normalize_record_image_path(record)
+            writer.writerow({name: normalized_record.get(name) for name in fieldnames})
 
 
 def write_markdown_report(records: list[dict], path: Path) -> None:
@@ -337,6 +342,10 @@ def write_html_report(records: list[dict], path: Path) -> None:
         gap: 0.28rem;
       }}
 
+      .filter-group-model {{
+        grid-column: span 2;
+      }}
+
       .filter-group label {{
         font-size: 0.67rem;
         font-weight: 600;
@@ -355,6 +364,90 @@ def write_html_report(records: list[dict], path: Path) -> None:
         font: 0.8rem/1.4 var(--sans);
         appearance: none;
         cursor: pointer;
+      }}
+
+      .multi-select {{
+        position: relative;
+      }}
+
+      .multi-select-trigger {{
+        width: 100%;
+        min-height: 2.3rem;
+        padding: 0.42rem 1.9rem 0.42rem 0.55rem;
+        border: 1px solid var(--rule);
+        border-radius: 0;
+        background: var(--page);
+        color: var(--ink);
+        font: 0.8rem/1.4 var(--sans);
+        text-align: left;
+        cursor: pointer;
+        position: relative;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }}
+
+      .multi-select-trigger::after {{
+        content: "";
+        position: absolute;
+        right: 0.55rem;
+        top: 50%;
+        width: 10px;
+        height: 6px;
+        transform: translateY(-50%);
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E") no-repeat center / contain;
+        pointer-events: none;
+      }}
+
+      .multi-select-trigger:focus-visible {{
+        outline: 2px solid var(--ink);
+        outline-offset: -1px;
+      }}
+
+      .multi-select-panel {{
+        position: absolute;
+        top: calc(100% + 0.2rem);
+        left: 0;
+        right: 0;
+        z-index: 20;
+        display: none;
+        max-height: 14rem;
+        overflow-y: auto;
+        border: 1px solid var(--rule);
+        background: var(--page);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+      }}
+
+      .multi-select.is-open .multi-select-panel {{
+        display: block;
+      }}
+
+      .multi-select-option {{
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.5rem 0.55rem;
+        border-bottom: 1px solid #ecece8;
+        font: 0.78rem/1.35 var(--sans);
+        color: var(--ink);
+        cursor: pointer;
+      }}
+
+      .multi-select-option:last-child {{
+        border-bottom: none;
+      }}
+
+      .multi-select-option:hover {{
+        background: #f7f7f5;
+      }}
+
+      .multi-select-option input {{
+        margin-top: 0.15rem;
+        accent-color: var(--ink);
+      }}
+
+      .multi-select-option span {{
+        overflow-wrap: anywhere;
       }}
 
       select:focus {{
@@ -733,6 +826,10 @@ def write_html_report(records: list[dict], path: Path) -> None:
           padding-top: 1.1rem;
         }}
 
+        .filter-group-model {{
+          grid-column: span 1;
+        }}
+
         .summary {{
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -778,12 +875,16 @@ def write_html_report(records: list[dict], path: Path) -> None:
       </header>
 
       <section class="controls" aria-label="Filters">
-        <div class="filter-group">
-          <label for="model-filter">Model</label>
-          <select id="model-filter">
-            <option value="">All models</option>
-            {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in model_options)}
-          </select>
+        <div class="filter-group filter-group-model">
+          <label for="model-filter-trigger">Model</label>
+          <div class="multi-select" id="model-filter" aria-describedby="model-filter-hint">
+            <button type="button" id="model-filter-trigger" class="multi-select-trigger" aria-haspopup="true" aria-expanded="false">
+              All models
+            </button>
+            <div class="multi-select-panel" id="model-filter-panel" role="group" aria-label="Model filter options">
+              {"".join(f'<label class="multi-select-option"><input type="checkbox" value="{html.escape(option, quote=True)}"><span>{html.escape(option)}</span></label>' for option in model_options)}
+            </div>
+          </div>
         </div>
         <div class="filter-group">
           <label for="country-filter">Country of origin</label>
@@ -818,14 +919,6 @@ def write_html_report(records: list[dict], path: Path) -> None:
           <select id="tool-variant-filter">
             <option value="">All tool variants</option>
             {"".join(f'<option value="{html.escape(option, quote=True)}">{html.escape(option)}</option>' for option in tool_variant_options)}
-          </select>
-        </div>
-        <div class="filter-group">
-          <label for="sort-select">Sort</label>
-          <select id="sort-select">
-            <option value="default">Default order</option>
-            <option value="intelligence-desc">Intelligence &#x2193;</option>
-            <option value="intelligence-asc">Intelligence &#x2191;</option>
           </select>
         </div>
         <div class="filter-group">
@@ -883,12 +976,14 @@ def write_html_report(records: list[dict], path: Path) -> None:
     <script id="popover-data" type="application/json">{_json_for_html_script_tag(popovers)}</script>
     <script>
       const modelFilter = document.getElementById("model-filter");
+      const modelFilterTrigger = document.getElementById("model-filter-trigger");
+      const modelFilterPanel = document.getElementById("model-filter-panel");
+      const modelFilterCheckboxes = Array.from(modelFilterPanel.querySelectorAll("input[type='checkbox']"));
       const countryFilter = document.getElementById("country-filter");
       const weightsFilter = document.getElementById("weights-filter");
       const scenarioFilter = document.getElementById("scenario-filter");
       const promptFilter = document.getElementById("prompt-filter");
       const toolVariantFilter = document.getElementById("tool-variant-filter");
-      const sortSelect = document.getElementById("sort-select");
       const tableBody = document.getElementById("results-body");
       const popoverData = JSON.parse(document.getElementById("popover-data").textContent);
       const popoverDialog = document.getElementById("popover-dialog");
@@ -907,11 +1002,22 @@ def write_html_report(records: list[dict], path: Path) -> None:
       const rows = Array.from(tableBody.querySelectorAll("tr")).filter(
         (row) => !row.classList.contains("empty-state")
       );
-      const defaultOrder = rows.slice();
 
-      function parseIntelligence(value) {{
-        const parsed = Number.parseFloat(value);
-        return Number.isFinite(parsed) ? parsed : null;
+      function getSelectedModelValues() {{
+        return modelFilterCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
+      }}
+
+      function updateModelFilterLabel() {{
+        const selectedModels = getSelectedModelValues();
+        if (!selectedModels.length) {{
+          modelFilterTrigger.textContent = "All models";
+          return;
+        }}
+        if (selectedModels.length === 1) {{
+          modelFilterTrigger.textContent = selectedModels[0];
+          return;
+        }}
+        modelFilterTrigger.textContent = `${{selectedModels.length}} models selected`;
       }}
 
       function formatHeatmapAxisLabel(label) {{
@@ -921,7 +1027,8 @@ def write_html_report(records: list[dict], path: Path) -> None:
       }}
 
       function rowMatches(row) {{
-        const modelMatch = !modelFilter.value || row.dataset.model === modelFilter.value;
+        const selectedModels = getSelectedModelValues();
+        const modelMatch = !selectedModels.length || selectedModels.includes(row.dataset.model);
         const countryMatch = !countryFilter.value || row.dataset.country === countryFilter.value;
         const weightsMatch = !weightsFilter.value || row.dataset.weights === weightsFilter.value;
         const scenarioMatch = !scenarioFilter.value || row.dataset.scenario === scenarioFilter.value;
@@ -930,38 +1037,8 @@ def write_html_report(records: list[dict], path: Path) -> None:
         return modelMatch && countryMatch && weightsMatch && scenarioMatch && promptMatch && toolVariantMatch;
       }}
 
-      function compareRows(left, right) {{
-        const direction =
-          sortSelect.value === "intelligence-asc"
-            ? 1
-            : sortSelect.value === "intelligence-desc"
-              ? -1
-              : 0;
-
-        if (!direction) {{
-          return defaultOrder.indexOf(left) - defaultOrder.indexOf(right);
-        }}
-
-        const leftValue = parseIntelligence(left.dataset.intelligence);
-        const rightValue = parseIntelligence(right.dataset.intelligence);
-
-        if (leftValue === null && rightValue === null) {{
-          return defaultOrder.indexOf(left) - defaultOrder.indexOf(right);
-        }}
-        if (leftValue === null) {{
-          return 1;
-        }}
-        if (rightValue === null) {{
-          return -1;
-        }}
-        if (leftValue === rightValue) {{
-          return defaultOrder.indexOf(left) - defaultOrder.indexOf(right);
-        }}
-        return (leftValue - rightValue) * direction;
-      }}
-
       function renderRows() {{
-        const visibleRows = rows.filter(rowMatches).sort(compareRows);
+        const visibleRows = rows.filter(rowMatches);
         tableBody.innerHTML = "";
 
         // Update stats
@@ -972,9 +1049,8 @@ def write_html_report(records: list[dict], path: Path) -> None:
         statTotal.textContent = totalRuns;
         statPct.textContent = actionsPct + "%";
 
-        const isFiltered = modelFilter.value || countryFilter.value || weightsFilter.value || 
-                          scenarioFilter.value || promptFilter.value || toolVariantFilter.value || 
-                          sortSelect.value !== "default";
+        const isFiltered = getSelectedModelValues().length || countryFilter.value || weightsFilter.value || 
+                          scenarioFilter.value || promptFilter.value || toolVariantFilter.value;
         clearFiltersBtn.style.display = isFiltered ? "inline-block" : "none";
 
         updateHeatmap(visibleRows);
@@ -1007,8 +1083,13 @@ def write_html_report(records: list[dict], path: Path) -> None:
           const y = row.dataset.prompt;
           const x = `${{row.dataset.scenario}} · ${{row.dataset.toolVariant}}`;
           const key = `${{y}}|${{x}}`;
-          if (!dataGrid[key]) dataGrid[key] = {{ v: 0 }};
-          if (row.dataset.calledTool === "1") dataGrid[key].v++;
+          if (!dataGrid[key]) dataGrid[key] = {{ v: 0, models: new Set() }};
+          if (row.dataset.calledTool === "1") {{
+            dataGrid[key].v++;
+            if (row.dataset.model) {{
+              dataGrid[key].models.add(row.dataset.model);
+            }}
+          }}
           ySet.add(y);
           xSet.add(x);
           modelSet.add(row.dataset.model);
@@ -1030,7 +1111,13 @@ def write_html_report(records: list[dict], path: Path) -> None:
         yLabels.forEach(y => {{
           xLabels.forEach(x => {{
             const key = `${{y}}|${{x}}`;
-            dataPoints.push({{ x, y, v: dataGrid[key] ? dataGrid[key].v : 0 }});
+            const cell = dataGrid[key];
+            dataPoints.push({{
+              x,
+              y,
+              v: cell ? cell.v : 0,
+              models: cell ? Array.from(cell.models).sort((left, right) => left.localeCompare(right)) : []
+            }});
           }});
         }});
 
@@ -1150,6 +1237,13 @@ def write_html_report(records: list[dict], path: Path) -> None:
                       const tModels = item.chart.options.totalModels;
                       const pct = tModels > 0 ? Math.round((d.v / tModels) * 100) : 0;
                       return `${{d.v}} / ${{tModels}} models complied (${{pct}}%)`;
+                    }},
+                    afterLabel: (item) => {{
+                      const d = item.dataset.data[item.dataIndex];
+                      if (!d.models || !d.models.length) {{
+                        return "Models: none";
+                      }}
+                      return ["Models:", ...d.models];
                     }}
                   }}
                 }}
@@ -1159,13 +1253,17 @@ def write_html_report(records: list[dict], path: Path) -> None:
       }}
 
       function clearFilters() {{
-        modelFilter.value = "";
+        modelFilterCheckboxes.forEach((checkbox) => {{
+          checkbox.checked = false;
+        }});
+        updateModelFilterLabel();
+        modelFilter.classList.remove("is-open");
+        modelFilterTrigger.setAttribute("aria-expanded", "false");
         countryFilter.value = "";
         weightsFilter.value = "";
         scenarioFilter.value = "";
         promptFilter.value = "";
         toolVariantFilter.value = "";
-        sortSelect.value = "default";
         renderRows();
       }}
 
@@ -1250,13 +1348,21 @@ def write_html_report(records: list[dict], path: Path) -> None:
         requestAnimationFrame(() => layoutScenarioMarkers(root));
       }}
 
-      modelFilter.addEventListener("change", renderRows);
+      modelFilterTrigger.addEventListener("click", () => {{
+        const isOpen = modelFilter.classList.toggle("is-open");
+        modelFilterTrigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      }});
+      modelFilterCheckboxes.forEach((checkbox) => {{
+        checkbox.addEventListener("change", () => {{
+          updateModelFilterLabel();
+          renderRows();
+        }});
+      }});
       countryFilter.addEventListener("change", renderRows);
       weightsFilter.addEventListener("change", renderRows);
       scenarioFilter.addEventListener("change", renderRows);
       promptFilter.addEventListener("change", renderRows);
       toolVariantFilter.addEventListener("change", renderRows);
-      sortSelect.addEventListener("change", renderRows);
       window.addEventListener("resize", () => {{
         layoutScenarioMarkers(popoverContent);
         renderRows();
@@ -1264,6 +1370,10 @@ def write_html_report(records: list[dict], path: Path) -> None:
       clearFiltersBtn.addEventListener("click", clearFilters);
       popoverClose.addEventListener("click", () => popoverDialog.close());
       document.addEventListener("click", (event) => {{
+        if (!modelFilter.contains(event.target)) {{
+          modelFilter.classList.remove("is-open");
+          modelFilterTrigger.setAttribute("aria-expanded", "false");
+        }}
         const tab = event.target.closest("[data-tab-target]");
         if (tab) {{
           activateDetailTab(popoverContent, tab.dataset.tabTarget);
@@ -1287,6 +1397,7 @@ def write_html_report(records: list[dict], path: Path) -> None:
           popoverDialog.close();
         }}
       }});
+      updateModelFilterLabel();
       renderRows();
     </script>
   </body>
@@ -1487,10 +1598,7 @@ def _scenario_image_markup(record: dict, *, include_marker: bool) -> str:
     marker_x = _coerce_coordinate(record.get("x"))
     marker_y = _coerce_coordinate(record.get("y"))
     if image_path:
-        try:
-            image_uri = Path(image_path).expanduser().resolve().as_uri()
-        except ValueError:
-            image_uri = ""
+        image_uri = _image_uri(image_path)
         if image_uri:
             marker_markup = ""
             if include_marker and marker_x is not None and marker_y is not None:
@@ -1515,6 +1623,38 @@ def _scenario_image_markup(record: dict, *, include_marker: bool) -> str:
         '<div class="code-block">No scenario image path available.</div>'
         "</figure>"
     )
+
+
+def _image_uri(image_path: str) -> str:
+    if image_path.startswith("file://"):
+        image_path = image_path.removeprefix("file://")
+    elif "://" in image_path:
+        return image_path
+
+    normalized_path = image_path.lstrip("./")
+    if normalized_path.startswith("images/"):
+        return f"{GITHUB_REPO_RAW_BASE}/fixtures/{normalized_path}"
+
+    if normalized_path.startswith("fixtures/"):
+        return f"{GITHUB_REPO_RAW_BASE}/{normalized_path}"
+
+    try:
+        return Path(image_path).expanduser().resolve().as_uri()
+    except ValueError:
+        return ""
+
+
+def normalize_image_path(image_path: str) -> str:
+    image_uri = _image_uri(image_path)
+    return image_uri or image_path
+
+
+def _normalize_record_image_path(record: dict) -> dict:
+    normalized_record = dict(record)
+    image_path = str(normalized_record.get("image_path", "")).strip()
+    if image_path:
+        normalized_record["image_path"] = normalize_image_path(image_path)
+    return normalized_record
 
 
 def _tool_call_summary_markup(record: dict) -> str:
