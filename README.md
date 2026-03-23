@@ -23,9 +23,11 @@ python3 -m killbot_benchmark run --config fixtures/benchmark.jsonc
 
 By default, runs use append mode and add the selected cases to `runs/latest/results.jsonl`, then regenerate the summaries from the combined file.
 
-Set `"run": { "mode": "overwrite" }` in the config when you want the old behavior: move the current `runs/latest/` into `runs/archive/<timestamp>/` and rebuild `latest` from scratch.
-
 Append mode also defaults to `"skip_existing": true`, so previously recorded `model + prompt + tool + scenario` combinations are skipped instead of duplicated.
+
+Set `"run": { "mode": "append_overwrite_existing" }` when you want to keep `runs/latest` but replace any existing records that match the selected `model + prompt + tool + scenario` combinations before appending fresh results.
+
+Set `"run": { "mode": "overwrite" }` when you want to archive the current `runs/latest/` into `runs/archive/<timestamp>/` and rebuild `latest` from scratch.
 
 4. Preview the full matrix without making API requests. The plan is printed to the console and no files are written:
 

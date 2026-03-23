@@ -303,8 +303,10 @@ def load_config(config_path: str | Path) -> BenchmarkConfig:
     selected_scenarios = _select_items("scenario", scenarios, selection_data.get("scenarios"))
 
     mode = str(run_data.get("mode", "append")).strip().lower() or "append"
-    if mode not in {"append", "overwrite"}:
-        raise ValueError("run.mode must be either 'append' or 'overwrite'")
+    if mode not in {"append", "append_overwrite_existing", "overwrite"}:
+        raise ValueError(
+            "run.mode must be one of 'append', 'append_overwrite_existing', or 'overwrite'"
+        )
 
     run = RunSettings(
         user_prompt=user_prompt,

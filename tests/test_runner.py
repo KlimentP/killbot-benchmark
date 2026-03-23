@@ -414,6 +414,52 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(fake.calls, [])
             self.assertEqual(outputs["results"].read_text(encoding="utf-8"), existing_case)
 
+    def test_run_benchmark_append_overwrite_existing_replaces_matching_cases_only(self) -> None:
+        config = load_config(ROOT / "fixtures" / "benchmark.jsonc")
+        fake = FakeClient()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            latest_dir = Path(tmp_dir) / "latest"
+            latest_dir.mkdir(parents=True, exist_ok=True)
+            matching_case = (
+                f'{{"run_id":"old-match","timestamp":"t","model_id":"{config.models[0].id}",'
+                f'"prompt_id":"{config.prompts[0].id}","tool_variant_id":"{config.tools[0].id}",'
+                f'"scenario_id":"{config.scenarios[0].id}","called_tool":false,"refused":true}}\n'
+            )
+            other_case = (
+                '{"run_id":"old-keep","timestamp":"t","model_id":"legacy","prompt_id":"legacy",'
+                '"tool_variant_id":"legacy","scenario_id":"legacy","called_tool":false,"refused":true}\n'
+            )
+            (latest_dir / "results.jsonl").write_text(matching_case + other_case, encoding="utf-8")
+
+            sandbox_config = type(config)(
+                source_path=config.source_path,
+                models=config.models[:1],
+                prompts=config.prompts[:1],
+                tools=config.tools[:1],
+                scenarios=config.scenarios[:1],
+                run=type(config.run)(
+                    user_prompt=config.run.user_prompt,
+                    output_dir=Path(tmp_dir),
+                    temperature=config.run.temperature,
+                    max_tokens=config.run.max_tokens,
+                    max_retries=config.run.max_retries,
+                    base_url=config.run.base_url,
+                    http_referer=config.run.http_referer,
+                    x_title=config.run.x_title,
+                    mode="append_overwrite_existing",
+                    skip_existing=config.run.skip_existing,
+                ),
+                catalog=config.catalog,
+            )
+            outputs = run_benchmark(sandbox_config, client=fake)
+
+            results_text = outputs["results"].read_text(encoding="utf-8")
+            self.assertEqual(len(fake.calls), 1)
+            self.assertNotIn('"run_id": "old-match"', results_text)
+            self.assertIn('"run_id": "old-keep"', results_text)
+            self.assertEqual(len(results_text.strip().splitlines()), 2)
+
     def test_normalize_result_with_error(self) -> None:
         config = load_config(ROOT / "fixtures" / "benchmark.jsonc")
         case = BenchmarkCase(config.models[0], config.prompts[0], config.tools[0], config.scenarios[0])

@@ -23,6 +23,7 @@ from killbot_benchmark.reporting import (
     append_jsonl,
     load_jsonl,
     write_html_report,
+    write_jsonl,
     write_summary_csv,
 )
 
@@ -69,7 +70,14 @@ def run_benchmark(
     html_report_path = latest_dir / "report.html"
     existing_records = load_jsonl(results_path) if results_path.exists() else []
     all_cases = build_cases(config)
-    planned_cases, skipped_existing = _filter_existing_cases(all_cases, existing_records, config)
+    (
+        retained_existing_records,
+        planned_cases,
+        skipped_existing,
+        overwritten_existing,
+    ) = _prepare_cases(all_cases, existing_records, config)
+    if config.run.mode == "append_overwrite_existing":
+        write_jsonl(results_path, retained_existing_records)
 
     logger.info(
         "Starting benchmark with %s models x %s prompts x %s tools x %s scenarios -> %s runs",
@@ -84,6 +92,12 @@ def run_benchmark(
         logger.info("Archived previous latest run to %s", archived_dir)
     if skipped_existing:
         logger.info("Skipping %s cases already present in %s", skipped_existing, results_path)
+    if overwritten_existing:
+        logger.info(
+            "Removing %s existing matching cases from %s before re-running them",
+            overwritten_existing,
+            results_path,
+        )
 
     for record in _run_cases(client, config, planned_cases):
         append_jsonl(results_path, record)
@@ -115,7 +129,9 @@ def render_dry_run_plan(config: BenchmarkConfig) -> str:
     results_path = latest_dir / "results.jsonl"
     existing_records = load_jsonl(results_path) if results_path.exists() else []
     all_cases = build_cases(config)
-    cases, skipped_existing = _filter_existing_cases(all_cases, existing_records, config)
+    _, cases, skipped_existing, overwritten_existing = _prepare_cases(
+        all_cases, existing_records, config
+    )
     lines = [
         "# Benchmark Dry Run",
         "",
@@ -143,6 +159,7 @@ def render_dry_run_plan(config: BenchmarkConfig) -> str:
         f"- Skip existing: {config.run.skip_existing}",
         f"- Existing results found: {len(existing_records)}",
         f"- Cases skipped as already present: {skipped_existing}",
+        f"- Existing matching cases overwritten: {overwritten_existing}",
         "",
         "## Planned cases",
         "",
@@ -444,15 +461,25 @@ def _discover_config_path(input_path: Path) -> Path | None:
     return None
 
 
-def _filter_existing_cases(
+def _prepare_cases(
     cases: list[BenchmarkCase], existing_records: list[dict[str, Any]], config: BenchmarkConfig
-) -> tuple[list[BenchmarkCase], int]:
-    if config.run.mode != "append" or not config.run.skip_existing or not existing_records:
-        return list(cases), 0
+) -> tuple[list[dict[str, Any]], list[BenchmarkCase], int, int]:
+    if not existing_records:
+        return [], list(cases), 0, 0
+
+    if config.run.mode == "append_overwrite_existing":
+        planned_keys = {_case_key(case) for case in cases}
+        retained_records = [
+            record for record in existing_records if _case_key_from_record(record) not in planned_keys
+        ]
+        return retained_records, list(cases), 0, len(existing_records) - len(retained_records)
+
+    if config.run.mode != "append" or not config.run.skip_existing:
+        return list(existing_records), list(cases), 0, 0
 
     existing_keys = {_case_key_from_record(record) for record in existing_records}
     filtered_cases = [case for case in cases if _case_key(case) not in existing_keys]
-    return filtered_cases, len(cases) - len(filtered_cases)
+    return list(existing_records), filtered_cases, len(cases) - len(filtered_cases), 0
 
 
 def _case_key(case: BenchmarkCase) -> tuple[str, str, str, str]:

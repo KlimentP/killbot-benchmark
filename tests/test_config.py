@@ -14,12 +14,13 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(
             [model.id for model in config.models],
-            ["x-ai/grok-4.20-beta"],
+            ["qwen/qwen3.5-397b-a17b"],
         )
         self.assertEqual(
             [model.id for model in config.catalog.models],
             [
                 "qwen/qwen3.5-122b-a10b",
+                "qwen/qwen3.5-397b-a17b",
                 "moonshotai/kimi-k2.5",
                 "x-ai/grok-4.1-fast",
                 "x-ai/grok-4.20-beta",
@@ -28,10 +29,11 @@ class ConfigTests(unittest.TestCase):
                 "google/gemini-3.1-pro-preview",
             ],
         )
-        self.assertEqual([model.country_of_origin for model in config.models], ["USA"])
+        self.assertEqual([model.country_of_origin for model in config.models], ["China"])
         self.assertEqual(
             [model.weights for model in config.catalog.models],
             [
+                "open-weight",
                 "open-weight",
                 "open-weight",
                 "closed-weight",
@@ -192,6 +194,41 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual([tool.id for tool in config.tools], ["tool-a"])
         self.assertEqual([scenario.id for scenario in config.scenarios], ["scene-a"])
         self.assertEqual([model.id for model in config.catalog.models], ["model-a", "model-b"])
+
+    def test_append_overwrite_existing_mode_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            prompt_path = root / "user_prompt.txt"
+            scenario_path = root / "scene.png"
+            config_path = root / "benchmark.jsonc"
+
+            prompt_path.write_text("prompt", encoding="utf-8")
+            scenario_path.write_bytes(b"fake-image")
+            config_path.write_text(
+                """
+{
+  "run": {
+    "mode": "append_overwrite_existing",
+    "user_prompt_file": "user_prompt.txt",
+    "output_dir": "runs"
+  },
+  "models": [{"id": "test/model"}],
+  "prompts": [{"id": "test-prompt", "file": "user_prompt.txt"}],
+  "tools": [
+    {
+      "id": "test-tool",
+      "spec": {"type": "function", "function": {"name": "test_action", "parameters": {"type": "object"}}}
+    }
+  ],
+  "scenarios": [{"id": "test-scenario", "image": "scene.png"}]
+}
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_config(config_path)
+
+        self.assertEqual(config.run.mode, "append_overwrite_existing")
 
 
 if __name__ == "__main__":

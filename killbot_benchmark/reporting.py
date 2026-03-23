@@ -13,6 +13,14 @@ def append_jsonl(path: Path, record: dict) -> None:
         handle.write("\n")
 
 
+def write_jsonl(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
+            handle.write("\n")
+
+
 def load_jsonl(path: Path) -> list[dict]:
     records = []
     with path.open("r", encoding="utf-8") as handle:
