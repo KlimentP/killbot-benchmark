@@ -81,6 +81,7 @@ def write_html_report(records: list[dict], path: Path) -> None:
 
     total_runs = len(records)
     tool_calls = sum(1 for record in records if record.get("called_tool"))
+    actions_pct = f"{round(tool_calls / total_runs * 100)}%" if total_runs > 0 else "0%"
     errors = sum(1 for record in records if record.get("error"))
     other = sum(1 for record in records if _outcome_label(record) == "No action")
 
@@ -148,6 +149,7 @@ def write_html_report(records: list[dict], path: Path) -> None:
                         f' data-prompt="{html.escape(str(record.get("prompt_id", "")).strip(), quote=True)}"'
                         f' data-tool-variant="{html.escape(str(record.get("tool_variant_id", "")).strip(), quote=True)}"'
                         f' data-intelligence="{html.escape(intelligence, quote=True)}"'
+                        f' data-called-tool="{"1" if record.get("called_tool") else "0"}"'
                         ">"
                     ),
                     f"        <td>{_model_cell_markup(model_id, model_popover_id or '')}</td>",
@@ -183,6 +185,8 @@ def write_html_report(records: list[dict], path: Path) -> None:
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
     <style>
 
       :root {{
@@ -248,32 +252,36 @@ def write_html_report(records: list[dict], path: Path) -> None:
 
       /* ── Summary strip ──────────────────────── */
       .summary {{
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
         border-top: 1px solid var(--rule);
         border-bottom: 1px solid var(--rule);
-        margin: 1.75rem 0;
+        margin: 1.25rem 0;
+        background: #f7f7f5;
       }}
 
       .stat {{
-        padding: 1.1rem 1.25rem;
+        flex: 1 1 11rem;
+        min-width: 0;
+        padding: 0.85rem 1.25rem;
         border-right: 1px solid var(--rule);
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
       }}
 
       .stat:last-child {{ border-right: none; }}
 
       .stat strong {{
-        display: block;
         font-family: var(--mono);
-        font-size: 2.2rem;
+        font-size: 1.6rem;
         font-weight: 600;
         line-height: 1;
         color: var(--ink);
       }}
 
       .stat span {{
-        display: block;
-        margin-top: 0.4rem;
         font-size: 0.65rem;
         font-weight: 600;
         letter-spacing: 0.12em;
@@ -281,12 +289,47 @@ def write_html_report(records: list[dict], path: Path) -> None:
         color: var(--ink-3);
       }}
 
+      /* ── Heatmap ────────────────────────────── */
+      .heatmap-card {{
+        margin: 0 0 2rem;
+        border: 1px solid var(--rule);
+        padding: 1.5rem 1.25rem 1rem;
+        background: var(--page);
+        overflow-x: auto;
+        overflow-y: hidden;
+      }}
+      .heatmap-card h2 {{
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+        margin-bottom: 1.5rem;
+        border-bottom: 1px solid var(--rule);
+        padding-bottom: 0.5rem;
+      }}
+      .canvas-wrap {{
+        position: relative;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        margin: 0 auto;
+        height: 420px;
+      }}
+
+      .canvas-wrap canvas {{
+        display: block;
+        width: 100%;
+        height: 100%;
+      }}
+
       /* ── Filters ────────────────────────────── */
       .controls {{
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
         gap: 0.6rem;
         margin-bottom: 1rem;
+        align-items: end;
       }}
 
       .filter-group {{
@@ -317,6 +360,24 @@ def write_html_report(records: list[dict], path: Path) -> None:
       select:focus {{
         outline: 2px solid var(--ink);
         outline-offset: -1px;
+      }}
+
+      button.clear-btn {{
+        display: none;
+        height: 2.3rem;
+        padding: 0 1rem;
+        border: 1px solid var(--rule);
+        background: #eee;
+        color: var(--ink-2);
+        font: 600 0.68rem var(--sans);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: all 0.1s;
+      }}
+      button.clear-btn:hover {{
+        background: #e0e0e0;
+        border-color: var(--ink-3);
       }}
 
       .hint {{
@@ -662,21 +723,59 @@ def write_html_report(records: list[dict], path: Path) -> None:
         color: var(--ink-3);
         font-style: italic;
       }}
+
+      @media (max-width: 700px) {{
+        main {{
+          padding: 1.25rem 1rem 2.5rem;
+        }}
+
+        .report-header {{
+          padding-top: 1.1rem;
+        }}
+
+        .summary {{
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }}
+
+        .stat {{
+          padding: 0.65rem 0.5rem 0.7rem;
+          gap: 0.28rem;
+          flex-direction: column;
+          align-items: flex-start;
+          border-right: 1px solid var(--rule);
+        }}
+
+        .stat strong {{
+          font-size: clamp(1.05rem, 7vw, 1.5rem);
+        }}
+
+        .stat span {{
+          font-size: 0.58rem;
+          letter-spacing: 0.08em;
+          line-height: 1.2;
+        }}
+
+        .heatmap-card {{
+          padding: 1rem 0.85rem 0.85rem;
+        }}
+
+        .heatmap-card h2 {{
+          margin-bottom: 1rem;
+        }}
+
+        .canvas-wrap {{
+          height: 320px;
+        }}
+      }}
     </style>
   </head>
   <body>
     <main>
       <header class="report-header">
         <h1>Killbot Benchmark — Results Report</h1>
-        <p class="subtitle">Autonomous weapons compliance evaluation &middot; tool-use decisions under adversarial prompting</p>
+        <p class="subtitle">Autonomous weapons compliance evaluation under different scenarios</p>
       </header>
-
-      <section class="summary" aria-label="Summary statistics">
-        <div class="stat"><strong>{total_runs}</strong><span>Total runs</span></div>
-        <div class="stat"><strong>{tool_calls}</strong><span>Tool calls</span></div>
-        <div class="stat"><strong>{errors}</strong><span>Errors</span></div>
-        <div class="stat"><strong>{other}</strong><span>No action</span></div>
-      </section>
 
       <section class="controls" aria-label="Filters">
         <div class="filter-group">
@@ -729,6 +828,22 @@ def write_html_report(records: list[dict], path: Path) -> None:
             <option value="intelligence-asc">Intelligence &#x2191;</option>
           </select>
         </div>
+        <div class="filter-group">
+          <button type="button" id="clear-filters" class="clear-btn">Clear Filters</button>
+        </div>
+      </section>
+
+      <section class="summary" aria-label="Summary statistics">
+        <div class="stat"><strong id="stat-actions">{tool_calls}</strong><span>Actions</span></div>
+        <div class="stat"><strong id="stat-total">{total_runs}</strong><span>Runs</span></div>
+        <div class="stat"><strong id="stat-pct">{actions_pct}</strong><span>Compliance</span></div>
+      </section>
+
+      <section class="heatmap-card">
+        <h2>Compliance Heatmap — Actions by Prompt × Scenario</h2>
+        <div class="canvas-wrap">
+          <canvas id="heatmapChart"></canvas>
+        </div>
       </section>
 
       <p class="hint">Click a model name for metadata &middot; click an outcome to inspect response and scenario</p>
@@ -780,6 +895,15 @@ def write_html_report(records: list[dict], path: Path) -> None:
       const popoverTitle = document.getElementById("popover-title");
       const popoverContent = document.getElementById("popover-content");
       const popoverClose = document.getElementById("popover-close");
+      const statActions = document.getElementById("stat-actions");
+      const statTotal = document.getElementById("stat-total");
+      const statPct = document.getElementById("stat-pct");
+      const clearFiltersBtn = document.getElementById("clear-filters");
+      const heatmapCard = document.querySelector(".heatmap-card");
+      const heatmapCanvas = document.getElementById("heatmapChart");
+      const heatmapWrap = heatmapCanvas.parentElement;
+      const heatmapCtx = heatmapCanvas.getContext("2d");
+      let heatmapChart = null;
       const rows = Array.from(tableBody.querySelectorAll("tr")).filter(
         (row) => !row.classList.contains("empty-state")
       );
@@ -788,6 +912,12 @@ def write_html_report(records: list[dict], path: Path) -> None:
       function parseIntelligence(value) {{
         const parsed = Number.parseFloat(value);
         return Number.isFinite(parsed) ? parsed : null;
+      }}
+
+      function formatHeatmapAxisLabel(label) {{
+        const [scenario = "", toolVariant = ""] = String(label).split(" · ");
+        const prettify = (value) => value.replace(/-/g, " ").trim();
+        return [prettify(scenario), prettify(toolVariant)];
       }}
 
       function rowMatches(row) {{
@@ -834,6 +964,21 @@ def write_html_report(records: list[dict], path: Path) -> None:
         const visibleRows = rows.filter(rowMatches).sort(compareRows);
         tableBody.innerHTML = "";
 
+        // Update stats
+        const totalRuns = visibleRows.length;
+        const actions = visibleRows.reduce((a, r) => a + (r.dataset.calledTool === "1" ? 1 : 0), 0);
+        const actionsPct = totalRuns > 0 ? Math.round((actions / totalRuns) * 100) : 0;
+        statActions.textContent = actions;
+        statTotal.textContent = totalRuns;
+        statPct.textContent = actionsPct + "%";
+
+        const isFiltered = modelFilter.value || countryFilter.value || weightsFilter.value || 
+                          scenarioFilter.value || promptFilter.value || toolVariantFilter.value || 
+                          sortSelect.value !== "default";
+        clearFiltersBtn.style.display = isFiltered ? "inline-block" : "none";
+
+        updateHeatmap(visibleRows);
+
         if (!visibleRows.length) {{
           tableBody.innerHTML = '<tr><td colspan="5" class="empty-state">No rows match the selected filters.</td></tr>';
           return;
@@ -842,6 +987,186 @@ def write_html_report(records: list[dict], path: Path) -> None:
         for (const row of visibleRows) {{
           tableBody.appendChild(row);
         }}
+      }}
+
+      function updateHeatmap(visibleRows) {{
+        if (!visibleRows.length) {{
+          if (heatmapChart) heatmapChart.destroy();
+          heatmapChart = null;
+          heatmapWrap.style.minWidth = "0px";
+          heatmapWrap.style.height = window.innerWidth <= 700 ? "320px" : "420px";
+          return;
+        }}
+
+        const dataGrid = {{}};
+        const ySet = new Set();
+        const xSet = new Set();
+        const modelSet = new Set();
+
+        visibleRows.forEach(row => {{
+          const y = row.dataset.prompt;
+          const x = `${{row.dataset.scenario}} · ${{row.dataset.toolVariant}}`;
+          const key = `${{y}}|${{x}}`;
+          if (!dataGrid[key]) dataGrid[key] = {{ v: 0 }};
+          if (row.dataset.calledTool === "1") dataGrid[key].v++;
+          ySet.add(y);
+          xSet.add(x);
+          modelSet.add(row.dataset.model);
+        }});
+
+        const yLabels = Array.from(ySet).sort();
+        const xLabels = Array.from(xSet).sort();
+        const totalModels = modelSet.size;
+        const mobile = window.innerWidth <= 700;
+        const targetColumnWidth = mobile ? 144 : 148;
+        const targetRowHeight = mobile ? 82 : 128;
+        const chartWidth = Math.max(heatmapCard.clientWidth - (mobile ? 28 : 40), xLabels.length * targetColumnWidth);
+        const chartHeight = Math.max(mobile ? 280 : 340, yLabels.length * targetRowHeight + (mobile ? 84 : 72));
+
+        heatmapWrap.style.minWidth = `${{chartWidth}}px`;
+        heatmapWrap.style.height = `${{chartHeight}}px`;
+
+        const dataPoints = [];
+        yLabels.forEach(y => {{
+          xLabels.forEach(x => {{
+            const key = `${{y}}|${{x}}`;
+            dataPoints.push({{ x, y, v: dataGrid[key] ? dataGrid[key].v : 0 }});
+          }});
+        }});
+
+        if (heatmapChart) {{
+          heatmapChart.destroy();
+        }}
+
+        heatmapChart = new Chart(heatmapCtx, {{
+            type: 'matrix',
+            data: {{
+              datasets: [{{
+                label: 'Tool compliance',
+                data: dataPoints,
+                backgroundColor(context) {{
+                  const val = context.dataset.data[context.dataIndex];
+                  const tModels = context.chart.options.totalModels;
+                  if (!val || tModels === 0) return 'rgba(0,0,0,0.05)';
+                  const t = val.v / tModels;
+                  const stops = [
+                    {{ at: 0.00, r: 26,  g: 110, b: 60  }},  
+                    {{ at: 0.43, r: 192, g: 120, b: 0   }},  
+                    {{ at: 1.00, r: 184, g: 0,   b: 9   }},  
+                  ];
+                  let lo = stops[0], hi = stops[stops.length-1];
+                  for(let i=0; i<stops.length-1; i++) {{
+                    if (t >= stops[i].at && t <= stops[i+1].at) {{ lo = stops[i]; hi = stops[i+1]; break; }}
+                  }}
+                  const localT = (hi.at === lo.at) ? 0 : (t - lo.at) / (hi.at - lo.at);
+                  const lerp = (a, b, f) => Math.round(a + (b - a) * f);
+                  return `rgb(${{lerp(lo.r, hi.r, localT)}}, ${{lerp(lo.g, hi.g, localT)}}, ${{lerp(lo.b, hi.b, localT)}})`;
+                }},
+                borderColor: '#ffffff',
+                borderWidth: 2,
+                width: ({{chart}}) => {{
+                  const area = chart.chartArea;
+                  return area ? (area.right - area.left) / xLabels.length - 2 : 0;
+                }},
+                height: ({{chart}}) => {{
+                  const area = chart.chartArea;
+                  return area ? (area.bottom - area.top) / yLabels.length - 2 : 0;
+                }}
+              }}]
+            }},
+            plugins: [{{
+              id: 'cellLabels',
+              afterDraw(chart) {{
+                const {{ctx, data}} = chart;
+                const tModels = chart.options.totalModels;
+                const meta = chart.getDatasetMeta(0);
+                ctx.save();
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                meta.data.forEach((el, idx) => {{
+                  const {{v}} = data.datasets[0].data[idx];
+                  const {{x, y}} = el.getCenterPoint();
+                  ctx.fillStyle = '#ffffff';
+                  ctx.font = `600 11px var(--mono)`;
+                  ctx.fillText(`${{v}}/${{tModels}}`, x, y);
+                }});
+                ctx.restore();
+              }}
+            }}],
+            options: {{
+              responsive: true,
+              maintainAspectRatio: false,
+              totalModels: totalModels,
+              layout: {{
+                padding: {{
+                  top: mobile ? 10 : 14,
+                  right: 8,
+                  bottom: 8,
+                  left: 8
+                }}
+              }},
+              scales: {{
+                x: {{ 
+                  type: 'category', 
+                  labels: xLabels, 
+                  position: 'top', 
+                  grid: {{display: false}},
+                  offset: true,
+                  ticks: {{ 
+                    color: '#333333',
+                    font: {{family: "'IBM Plex Mono', monospace", size: mobile ? 8 : 10, weight: '600'}},
+                    padding: mobile ? 12 : 10,
+                    maxRotation: 0,
+                    minRotation: 0,
+                    autoSkip: false,
+                    callback: function(val, index) {{
+                      const l = this.getLabelForValue(val);
+                      return l ? formatHeatmapAxisLabel(l) : '';
+                    }}
+                  }}
+                }},
+                y: {{ 
+                  type: 'category', 
+                  labels: yLabels, 
+                  offset: true,
+                  grid: {{display: false}},
+                  ticks: {{ 
+                    color: '#333333',
+                    padding: 8,
+                    font: {{family: "'IBM Plex Sans', sans-serif", size: mobile ? 9 : 10}} 
+                  }}
+                }}
+              }},
+              plugins: {{
+                legend: {{ display: false }},
+                tooltip: {{
+                  callbacks: {{
+                    title: (items) => {{
+                      const d = items[0].dataset.data[items[0].dataIndex];
+                      return `${{d.y}}  ·  ${{d.x}}`;
+                    }},
+                    label: (item) => {{
+                      const d = item.dataset.data[item.dataIndex];
+                      const tModels = item.chart.options.totalModels;
+                      const pct = tModels > 0 ? Math.round((d.v / tModels) * 100) : 0;
+                      return `${{d.v}} / ${{tModels}} models complied (${{pct}}%)`;
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }});
+      }}
+
+      function clearFilters() {{
+        modelFilter.value = "";
+        countryFilter.value = "";
+        weightsFilter.value = "";
+        scenarioFilter.value = "";
+        promptFilter.value = "";
+        toolVariantFilter.value = "";
+        sortSelect.value = "default";
+        renderRows();
       }}
 
       function openPopover(id) {{
@@ -932,7 +1257,11 @@ def write_html_report(records: list[dict], path: Path) -> None:
       promptFilter.addEventListener("change", renderRows);
       toolVariantFilter.addEventListener("change", renderRows);
       sortSelect.addEventListener("change", renderRows);
-      window.addEventListener("resize", () => layoutScenarioMarkers(popoverContent));
+      window.addEventListener("resize", () => {{
+        layoutScenarioMarkers(popoverContent);
+        renderRows();
+      }});
+      clearFiltersBtn.addEventListener("click", clearFilters);
       popoverClose.addEventListener("click", () => popoverDialog.close());
       document.addEventListener("click", (event) => {{
         const tab = event.target.closest("[data-tab-target]");
